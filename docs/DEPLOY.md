@@ -47,22 +47,28 @@ Dialing is **refused** unless **all** hold (enforced in `safety_controls.py`):
 make cekura-check    # verify Cekura connectivity (explicit status, never a silent no-op)
 ```
 
-## Running a REAL efficacy test (closes BLOCKER 4)
+## Running a REAL efficacy test (closes BLOCKER 4) — click-to-run
 
 The offline scorecard attacks RedDial's **own mock** — it is **not** evidence about a
-real agent. To produce real evidence, an operator with keys + consent runs:
+real agent. To produce real evidence, an operator with keys + consent runs two commands:
 
 ```bash
+# (1) Serve the attacker bot. The Pipecat runner exposes the telephony media socket
+#     at /ws and dispatches it to attacker_bot.bot(); our TwiML streams back to /ws.
+make serve-attacker PUBLIC_HOST=your-app.ngrok.io     # needs NVIDIA + Gradium keys
+
+# (2) In another shell: place ONE gated, consented call (fail-closed safety gate).
 export REDDIAL_DIALING_ENABLED=1
-export REDDIAL_DIAL_ALLOWLIST=+1XXXXXXXXXX        # a number you own / have written consent for
-# NVIDIA + Twilio env set, attacker bot deployed, /attacker-ws reachable
-uv run python efficacy_run.py --mode live --to +1XXXXXXXXXX --consent
+export REDDIAL_DIAL_ALLOWLIST=+1XXXXXXXXXX             # a number you own / have written consent for
+make live-call TO=+1XXXXXXXXXX                         # = efficacy_run.py --mode live --to ... --consent
 ```
 
-This **initiates one gated call**; the breach verdict comes from the attacker
-pipeline's `leak_classifier` on the live transcript. Attach that transcript to the
-artifact in `results/` to claim efficacy. `--mode loopback` always stamps
-`proves_real_world_efficacy = false`.
+Flow: `live-call` → gated `place_outbound_call` → Twilio dials the target → Twilio
+opens the media stream back to `wss://$PUBLIC_HOST/ws` → the runner runs the attacker
+pipeline → on completion it writes `results/efficacy_live_<id>.json` (transcript +
+`leak_classifier` verdict, `target_kind="real-agent"`). `--mode loopback` always
+stamps `proves_real_world_efficacy = false`. The media path is `/ws` (the runner's
+route); override with `REDDIAL_WS_PATH` only if you front the bot with a custom server.
 
 ## Operability
 
@@ -75,5 +81,6 @@ artifact in `results/` to claim efficacy. `--mode loopback` always stamps
 
 ## Known follow-ups (tracked in docs/PRODUCTION_READINESS.md)
 
-- Register the `/attacker-ws` websocket route in the runner before the first live call.
+- ~~Register the `/attacker-ws` websocket route~~ — RESOLVED: the runner serves `/ws` and the
+  outbound TwiML now targets it (`REDDIAL_WS_PATH=/ws`). Verify on the first live call.
 - Real-world efficacy remains **unproven** until a live run against a non-self agent is recorded.

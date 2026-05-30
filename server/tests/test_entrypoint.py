@@ -48,6 +48,21 @@ def test_load_role_module_does_not_raise_unbound(role, expected_module, monkeypa
     assert hasattr(mod, "bot")
 
 
+def test_twiml_targets_runner_served_route(monkeypatch):
+    """The outbound TwiML must stream to the route the Pipecat runner actually
+    serves for telephony media — `/ws` — not the old 404'ing `/attacker-ws`."""
+    pytest.importorskip("loguru")
+    import attacker_bot
+    monkeypatch.delenv("REDDIAL_WS_PATH", raising=False)
+    monkeypatch.setenv("PUBLIC_HOST", "example.ngrok.io")
+    twiml = attacker_bot.build_attacker_twiml()
+    assert 'wss://example.ngrok.io/ws"' in twiml
+    assert "attacker-ws" not in twiml
+    # still overridable for a custom front-end server
+    monkeypatch.setenv("REDDIAL_WS_PATH", "/media")
+    assert "/media" in attacker_bot.build_attacker_twiml()
+
+
 def test_callguard_wired_into_dial_path(monkeypatch):
     """place_outbound_call must reserve a CallGuard slot (volume control), not
     just check the destination gate."""

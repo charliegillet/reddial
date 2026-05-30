@@ -34,6 +34,13 @@ efficacy:  ## One honestly-labeled loopback efficacy artifact (results/)
 cekura-check:  ## Probe Cekura connectivity (loud status, not a silent no-op)
 	$(UV) run python -c "import cekura_integration as C; print(C.check_connection())"
 
+serve-attacker:  ## Run the attacker bot server (serves Twilio media at /ws). Needs NVIDIA+Gradium keys.
+	REDDIAL_ROLE=attacker $(UV) run python bot.py -t twilio --proxy $(or $(PUBLIC_HOST),localhost:7860)
+
+live-call:  ## Place ONE gated, consented live attack call. TO=+1XXXXXXXXXX (needs Twilio + dialing gate ON)
+	@test -n "$(TO)" || (echo "set TO=+1XXXXXXXXXX (an allowlisted, consented number)"; exit 1)
+	$(UV) run python efficacy_run.py --mode live --to $(TO) --consent
+
 build:  ## Build the deploy image (override TAG / ROLE)
 	docker build -t reddial:$(or $(TAG),dev) --build-arg PIPECAT_BASE=$(or $(BASE),dailyco/pipecat-base:0.0.8) .
 

@@ -113,7 +113,9 @@ GitHub Actions CI (`uv sync --locked` + ruff + `pytest tests/`); import-smoke + 
 fail-closed gate (kill-switch off by default, E.164 allowlist, per-call consent, `CallGuard` cap + rate
 limit), wired + tested; deploy entrypoint fixed (`bot.py` role dispatcher); `twilio` dep added; LAN-IP
 defaults replaced with required config; Cekura endpoint corrected + loud `check_connection()`.
-**Still open:** `/attacker-ws` route registration — code TODO, can't be verified without a live call.
+**Resolved:** the media-stream path — the Pipecat runner serves telephony at `/ws` and dispatches to
+`attacker_bot.bot()`; the outbound TwiML now targets `/ws` (was the 404'ing `/attacker-ws`). `make
+serve-attacker` + `make live-call TO=...` is the click-to-run live path. Final confirmation needs one live call.
 
 **Phase 2 — real autonomy ✅ / real-world efficacy ⛔ NOT YET (requires an operator live run).**
 Model-based posture classifier (`posture.py`) + hardened keyword fallback replaces the brittle matcher;
