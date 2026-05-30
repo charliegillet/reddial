@@ -74,6 +74,26 @@ def _public_host() -> str:
     return os.environ.get("PUBLIC_HOST", "example.invalid")
 
 
+_DIAL_GUARD = None
+
+
+def _dial_guard():
+    """Lazily build the per-process outbound CallGuard (cap + rate limit).
+
+    Cap from REDDIAL_MAX_CALLS (default 50); min interval from
+    REDDIAL_MIN_CALL_INTERVAL_S (default 0). Singleton so the cap spans a run.
+    """
+    global _DIAL_GUARD
+    if _DIAL_GUARD is None:
+        import safety_controls
+        try:
+            interval = float(os.environ.get("REDDIAL_MIN_CALL_INTERVAL_S", "0"))
+        except ValueError:
+            interval = 0.0
+        _DIAL_GUARD = safety_controls.CallGuard(min_interval_s=interval)
+    return _DIAL_GUARD
+
+
 def build_attacker_twiml(host: str | None = None) -> str:
     """TwiML that bridges the outbound PSTN leg back to our /attacker-ws media WS.
 
@@ -112,6 +132,10 @@ def place_outbound_call(to_number: str, from_number: str | None = None,
     # --- ENFORCED safety gate (fail-closed) — must run before anything else ---
     import safety_controls
     safety_controls.check_destination(to_number, consent=consent)
+    # Volume control: per-process call cap + rate limit (raises DialingNotAllowed
+    # when exceeded). Reserve a slot BEFORE dialing so back-to-back calls to an
+    # allowlisted number can't become an unthrottled autodialer.
+    _dial_guard().acquire()
     host = safety_controls.validate_public_host(host or _public_host())
 
     account_sid = os.environ.get("TWILIO_ACCOUNT_SID")

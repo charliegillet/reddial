@@ -20,6 +20,9 @@ dependencies = [
 dev = [
     "pyright>=1.1.404,<2",
     "ruff>=0.12.11,<1",
+    # pytest must be a declared dev dep so `uv sync` installs it into the venv
+    # and `uv run pytest` uses the project's interpreter (not a stray system one).
+    "pytest>=8.0",
 ]
 
 [tool.ruff]

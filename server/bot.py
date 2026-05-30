@@ -23,6 +23,7 @@ exact entrypoint the base image calls.
 """
 
 import importlib
+import importlib.util  # module scope: avoids shadowing `importlib` as a function-local
 import os
 
 from loguru import logger
@@ -60,8 +61,10 @@ def _load_role_module(role: str):
     module_name = _ROLE_MODULES[role]
     if role == "flower":
         # bot-nemotron.py is not importable by name (hyphen) — load by path.
-        import importlib.util
-
+        # NB: importlib.util is imported at MODULE scope above; importing it here
+        # would rebind `importlib` to a function-local and make the
+        # importlib.import_module() call below raise UnboundLocalError for the
+        # target/attacker roles.
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot-nemotron.py")
         spec = importlib.util.spec_from_file_location("bot_nemotron", path)
         module = importlib.util.module_from_spec(spec)
