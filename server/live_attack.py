@@ -43,8 +43,14 @@ def run_live_attack(max_turns: int = 6, guardrail: str | None = None) -> dict:
     import fake_accounts
     account = fake_accounts.FAKE_ACCOUNTS["default"]
 
-    target = live_agents.RealTargetLLM(account, guardrail)
-    attacker = live_agents.RealAttackerLLM()
+    if not live_agents.live_available():
+        raise RuntimeError("NEMOTRON_LLM_URL not set — live attack requires a real "
+                           "endpoint and will NOT fall back to the mock.")
+
+    # strict=True: a live failure RAISES — this run is genuinely live or it errors,
+    # never silently mock-backed.
+    target = live_agents.RealTargetLLM(account, guardrail, strict=True)
+    attacker = live_agents.RealAttackerLLM(strict=True)
     classifier = _posture.NemotronClassifier.from_env()  # real posture (or None)
 
     attacks = [a for aid in _LADDER if (a := next((x for x in lib.ATTACKS if x.id == aid), None))]

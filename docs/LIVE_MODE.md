@@ -37,9 +37,13 @@ Two model gotchas that are handled (don't regress them):
   Real-world efficacy still requires a recorded call against an agent your team did not author.
 
 ## Honesty guarantees (built in)
-- **No silent live→mock.** If the endpoint is unset/errors/returns empty, the agent falls back to
-  the deterministic mock and sets `live_failed = True`. The artifact records it — a "live" result
-  can never be a disguised mock result.
+- **Live mode does NOT fall back to the mock.** `live_attack.py` builds both agents with
+  `strict=True`: if the endpoint is unset, errors, or returns empty content, the run **raises** —
+  it never produces a mock-backed result. So a live artifact is genuinely live or there is no
+  artifact. (`live_failed` therefore stays `False` on a successful live run.)
+- **The deterministic test/auto-improve path still degrades loudly, not silently.** Outside strict
+  mode (the default the offline suite and `auto_improve target_mode="real"` use), an unconfigured/
+  failed/empty call falls back to the mock and sets `live_failed = True` — recorded, never hidden.
 - **A well-aligned target with a *sane* guardrail refuses** (no breach). A breach only happens when
   the target is configured to be **deliberately vulnerable** — which is RedDial's documented premise
   ("we build the target to be vulnerable"). The live loop does not manufacture a leak from a safe agent.
