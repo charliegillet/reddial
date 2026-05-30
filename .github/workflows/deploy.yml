@@ -79,13 +79,25 @@ jobs:
           # The pcc CLI reads PIPECAT_CLOUD_API_KEY from the environment for
           # non-interactive auth; no `pcc auth login` needed in CI.
 
+      # IMPORTANT (audit C3): Pipecat Cloud runtime env comes ONLY from the secret
+      # set, NOT from the deploying shell. Setting REDDIAL_ROLE as a step `env:`
+      # would be INERT — it never reaches the runtime container. So we upsert the
+      # role into the deploy secret set first. `pcc secrets set` is an upsert and
+      # leaves the other runtime secrets (NVIDIA/Gradium/Twilio/...) untouched.
+      - name: Set runtime role in secret set
+        env:
+          PIPECAT_CLOUD_API_KEY: ${{ secrets.PIPECAT_CLOUD_API_KEY }}
+        run: |
+          echo "Pinning runtime REDDIAL_ROLE=${{ inputs.role }} into secret set 'reddial-secrets'"
+          uv run pcc secrets set reddial-secrets "REDDIAL_ROLE=${{ inputs.role }}" --skip
+
       - name: Deploy
         env:
           PIPECAT_CLOUD_API_KEY: ${{ secrets.PIPECAT_CLOUD_API_KEY }}
-          REDDIAL_ROLE: ${{ inputs.role }}
         run: |
-          echo "Deploying role=${REDDIAL_ROLE} tag=${{ inputs.image_tag }}"
-          # pcc reads server/pcc-deploy.toml for agent name / profile / scaling.
-          # Runtime secrets (NVIDIA/Gradium/Twilio/...) are managed in the Pipecat
-          # Cloud secret set (see scripts/setup-secrets.sh), NOT injected here.
+          echo "Deploying role=${{ inputs.role }} tag=${{ inputs.image_tag }}"
+          # pcc reads server/pcc-deploy.toml for agent name / profile / scaling and
+          # binds the `reddial-secrets` set as the runtime env. The role we pinned
+          # above (plus NVIDIA/Gradium/Twilio/... — see scripts/setup-secrets.sh)
+          # all arrive via that secret set, NOT from this shell.
           uv run pcc deploy

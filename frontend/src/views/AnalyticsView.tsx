@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { BarChart3, History, Activity } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { BarChart3, History, Activity, AlertTriangle } from "lucide-react";
 import { motion } from "framer-motion";
 import { api, type Metrics, type RunSummary } from "../api";
 
@@ -23,23 +23,35 @@ export function AnalyticsView() {
   const [metrics, setMetrics] = useState<CampaignMetrics | null>(null);
   const [scans, setScans] = useState<ScanSummaryRow[] | null>(null);
   const [loaded, setLoaded] = useState(false);
+  // Track whether *both* fetches failed so we can distinguish "API errored"
+  // from the legitimate "no runs yet" empty state.
+  const [errored, setErrored] = useState(false);
 
-  useEffect(() => {
+  const load = useCallback(() => {
+    setLoaded(false);
+    setErrored(false);
     const a = api as unknown as MaybeAnalyticsApi;
     const tasks: Promise<unknown>[] = [];
 
     if (typeof a.metrics === "function") {
-      tasks.push(a.metrics().then(setMetrics).catch(() => {}));
+      tasks.push(a.metrics().then(setMetrics));
     }
     if (typeof a.scans === "function") {
       tasks.push(
-        a.scans()
-          .then((r) => setScans(Array.isArray(r) ? r : r.runs ?? r.scans ?? []))
-          .catch(() => {})
+        a.scans().then((r) => setScans(Array.isArray(r) ? r : r.runs ?? r.scans ?? []))
       );
     }
-    Promise.allSettled(tasks).finally(() => setLoaded(true));
+    Promise.allSettled(tasks).then((results) => {
+      // Only flag an error banner if every attempted fetch rejected (a partial
+      // success still renders whatever data we got).
+      const attempted = results.length;
+      const rejected = results.filter((r) => r.status === "rejected").length;
+      setErrored(attempted > 0 && rejected === attempted);
+      setLoaded(true);
+    });
   }, []);
+
+  useEffect(() => { load(); }, [load]);
 
   const hasMetrics = metrics != null;
   const hasScans = scans != null && scans.length > 0;
@@ -50,6 +62,18 @@ export function AnalyticsView() {
       animate={{ y: 0 }}
       style={{ display: "flex", flexDirection: "column", gap: "24px" }}
     >
+      {errored && (
+        <div className="error-msg" role="alert">
+          <AlertTriangle size={14} />
+          <span>
+            Couldn't load analytics from the control-plane.
+            <button type="button" className="retry-button" onClick={load}>
+              Retry
+            </button>
+          </span>
+        </div>
+      )}
+
       <div className="card">
         <div className="card-header">
           <BarChart3 size={18} className="brand-icon" />

@@ -1,6 +1,10 @@
-agent_name = "flower-bot"
-secret_set = "flower-bot-secrets"
+agent_name = "reddial-attacker"
+secret_set = "reddial-secrets"
 agent_profile = "agent-1x"
+# NOTE: Pipecat Cloud runtime env (incl. REDDIAL_ROLE) comes ONLY from this
+# secret_set — NOT from the deploying shell, and pcc-deploy.toml accepts no inline
+# `env` key. Set the role with: pcc secrets set reddial-secrets REDDIAL_ROLE=<role>
+# (see scripts/setup-secrets.sh, .github/workflows/deploy.yml, docs/DEPLOY.md).
 
 [krisp_viva]
 	audio_filter = "tel"

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { MotionConfig } from "framer-motion";
 import {
   Shield,
@@ -9,12 +9,14 @@ import {
   MessagesSquare,
   Bell,
   TrendingDown,
+  ClipboardCheck,
 } from "lucide-react";
 import { api, type Attack, type Summary } from "./api";
 import { Sidebar } from "./components/Sidebar";
 import { DashboardView } from "./views/DashboardView";
 import { AnalyticsView } from "./views/AnalyticsView";
 import { AutoImproveView } from "./views/AutoImproveView";
+import { EvalsetView } from "./views/EvalsetView";
 import { LibraryView } from "./views/LibraryView";
 import { SettingsView } from "./views/SettingsView";
 import { ConversationView } from "./views/ConversationView";
@@ -35,6 +37,7 @@ type ViewId =
   | "conversation"
   | "analytics"
   | "auto-improve"
+  | "evalset"
   | "library"
   | "settings";
 
@@ -43,6 +46,7 @@ const NAV: { id: ViewId; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "conversation", label: "Conversation", icon: MessagesSquare },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
   { id: "auto-improve", label: "Auto-Improve", icon: TrendingDown },
+  { id: "evalset", label: "Evalset", icon: ClipboardCheck },
   { id: "library", label: "Attack Library", icon: LibraryIcon },
   { id: "settings", label: "Settings", icon: SettingsIcon },
 ];
@@ -59,11 +63,20 @@ export function App() {
   const [bellOpen, setBellOpen] = useState(false);
   const bellRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    api.health().then((h) => { setHealth("up"); setVersion(h.version); }).catch(() => setHealth("down"));
-    api.attacks().then((r) => setAttacks(r.attacks)).catch(() => {});
+  // Initial connect: kept in a callback so the UI can offer a "Retry" action
+  // when the control-plane is unreachable (instead of forcing a full reload).
+  const connect = useCallback(() => {
+    setHealth("?");
+    api.health()
+      .then((h) => { setHealth("up"); setVersion(h.version); })
+      .catch(() => setHealth("down"));
+    // Attacks/scorecard are best-effort: a missing or empty result degrades to
+    // the views' built-in empty states, so we don't surface these as errors.
+    api.attacks().then((r) => setAttacks(r.attacks ?? [])).catch(() => {});
     api.scorecardLatest().then(setSummary).catch(() => {});
   }, []);
+
+  useEffect(() => { connect(); }, [connect]);
 
   useEffect(() => {
     if (!bellOpen) return;
@@ -141,9 +154,17 @@ export function App() {
             <h1>Workspace / <span>{activeLabel}</span></h1>
           </div>
           <div className="topbar-right">
-            <div className="health-status">
-              <span className={`health-indicator ${health === "up" ? "up" : health === "down" ? "down" : ""}`} />
+            <div className="health-status" role="status" aria-live="polite">
+              <span
+                className={`health-indicator ${health === "up" ? "up" : health === "down" ? "down" : ""}`}
+                aria-hidden="true"
+              />
               {health === "up" ? `API Online · v${version}` : health === "down" ? "API Offline" : "Connecting..."}
+              {health === "down" && (
+                <button type="button" className="health-retry" onClick={connect}>
+                  Retry
+                </button>
+              )}
             </div>
 
             <div className="bell-wrap" ref={bellRef}>
@@ -195,6 +216,7 @@ export function App() {
             health={health}
             err={err}
             attacks={attacks}
+            onRetryConnect={connect}
           />
 
           {/* ── Main Content (view router) ── */}
@@ -211,6 +233,7 @@ export function App() {
               {activeView === "conversation" && <ConversationView summary={summary} />}
               {activeView === "analytics" && <AnalyticsView />}
               {activeView === "auto-improve" && <AutoImproveView />}
+              {activeView === "evalset" && <EvalsetView />}
               {activeView === "library" && <LibraryView attacks={attacks} />}
               {activeView === "settings" && (
                 <SettingsView apiBase={API_BASE} version={version} health={health} />

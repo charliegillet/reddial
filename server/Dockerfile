@@ -1,7 +1,19 @@
 # Pin the base image (audit: `latest` is non-reproducible). Override at build
 # with --build-arg PIPECAT_BASE=dailyco/pipecat-base:<tag>. Pin to a digest in
 # prod (dailyco/pipecat-base@sha256:...) for full reproducibility.
-ARG PIPECAT_BASE=dailyco/pipecat-base:0.0.8
+#
+# IMPORTANT: dailyco/pipecat-base is published for linux/arm64 ONLY (Pipecat
+# Cloud runs arm64). It has NO linux/amd64 manifest, so this image MUST be built
+# for arm64 (e.g. `docker buildx build --platform linux/arm64`). On an amd64
+# host/CI runner that means QEMU emulation — see .github/workflows/ci.yml.
+#
+# The previous default `0.0.8` did not exist on Docker Hub (lowest real tag is
+# 0.1.2); `FROM` failed with a manifest-not-found error on every build. Pinned
+# below to a real, current tag whose multi-arch index digest is recorded for
+# reproducibility (py3.12 satisfies the project's requires-python >=3.11).
+#   dailyco/pipecat-base:0.1.20-py3.12
+#   @sha256:6a64272104c307776101fd9b77bf6b6ded77026c5f7f0d23af21b7f564f65281
+ARG PIPECAT_BASE=dailyco/pipecat-base:0.1.20-py3.12
 FROM ${PIPECAT_BASE}
 
 # Default deploy role: the deliberately-vulnerable target. Override per deploy
