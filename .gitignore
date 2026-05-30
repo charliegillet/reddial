@@ -234,3 +234,4 @@ server/transcripts/*.wav
 server/transcripts/**/*.json
 server/results/
 frontend/dist/
+.rocketride/

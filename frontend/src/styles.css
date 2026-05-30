@@ -302,6 +302,48 @@ body::after {
   box-shadow: 0 0 12px var(--status-danger);
 }
 
+.health-retry {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-pure);
+  background: rgba(255, 42, 42, 0.15);
+  border: 1px solid rgba(255, 42, 42, 0.4);
+  border-radius: 99px;
+  padding: 2px 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.health-retry:hover {
+  background: rgba(255, 42, 42, 0.28);
+  border-color: var(--status-danger);
+}
+
+/* Inline retry affordance for error banners (.error-msg blocks). */
+.retry-button {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent-acid);
+  background: var(--accent-acid-dim);
+  border: 1px solid var(--accent-acid);
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.retry-button:hover {
+  background: var(--accent-acid);
+  color: var(--bg-void, #000);
+}
+
 /* Main Content Area */
 .main-layout {
   display: flex;

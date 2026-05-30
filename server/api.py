@@ -17,6 +17,7 @@ Run: ``uvicorn api:app``.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from pathlib import Path
 
@@ -28,6 +29,8 @@ import attack_library as lib
 import campaign_runner
 import loopback
 import scorecard
+
+logger = logging.getLogger("reddial.api")
 
 VERSION = "1.0.0"
 
@@ -127,6 +130,15 @@ def _read_transcript_disk(run_id: str | None = None) -> dict | None:
     all runs. Picks the newest file (prefer a breaching call so the UI shows a
     real breach after a restart). Returns the transcript-endpoint payload shape.
     """
+    def _mtime(p: Path) -> float:
+        # Resilient stat: a file/dir removed concurrently (e.g. a parallel
+        # persist run or external cleanup, racing this read) must not raise out
+        # of the sort key and 500 the endpoint — treat it as oldest.
+        try:
+            return p.stat().st_mtime
+        except OSError:
+            return 0.0
+
     base = Path(TRANSCRIPTS_DIR)
     if run_id:
         dirs = [base / run_id]
@@ -134,7 +146,7 @@ def _read_transcript_disk(run_id: str | None = None) -> dict | None:
         try:
             dirs = sorted(
                 (p for p in base.iterdir() if p.is_dir()),
-                key=lambda p: p.stat().st_mtime,
+                key=_mtime,
                 reverse=True,
             )
         except OSError:
@@ -147,7 +159,7 @@ def _read_transcript_disk(run_id: str | None = None) -> dict | None:
             continue
     if not files:
         return None
-    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    files.sort(key=_mtime, reverse=True)
 
     def _load(path: Path) -> dict | None:
         try:
@@ -359,7 +371,13 @@ def create_scan(req: ScanRequest) -> ScanResponse:
         _HISTORY.append(_history_summary(summary))
         del _HISTORY[:-HISTORY_LIMIT]  # bound the rolling history
     # Persist the latest aggregate so /scorecard/latest survives a process restart.
-    scorecard.write_json(summary, SCORECARD_PATH)
+    # Best-effort: the scan already ran and in-process state is committed, so a
+    # disk error (read-only fs, disk full) must NOT turn a successful scan into a
+    # 500 the client can't interpret. Log and continue.
+    try:
+        scorecard.write_json(summary, SCORECARD_PATH)
+    except OSError as exc:
+        logger.warning("scorecard persist failed for run_id=%s: %s", run_id, exc)
 
     return ScanResponse(run_id=run_id, summary=summary)
 

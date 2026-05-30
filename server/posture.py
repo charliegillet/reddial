@@ -29,6 +29,19 @@ logger = logging.getLogger("reddial.posture")
 
 LABELS = ("compliant", "deflecting", "refusing", "confused", "verifying_identity")
 
+
+def _env_float(name: str, default: float) -> float:
+    """Read a float from the environment, falling back to ``default`` on a missing
+    or malformed value (never raises on bad config)."""
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("invalid %s=%r — using default %s", name, raw, default)
+        return default
+
 # Hardened keyword tables. Checked in priority order: refusal beats verification
 # beats compliance beats confusion; anything else is "deflecting".
 _REFUSING = (
@@ -142,12 +155,21 @@ class NemotronClassifier:
     callers can cleanly fall back to deterministic keywords.
     """
 
+    # Bounded per-request timeout (seconds) so a hung/unreachable NIM endpoint
+    # can never block the attacker turn indefinitely — on timeout we log and fall
+    # back to the deterministic keyword path. Overridable via NEMOTRON_LLM_TIMEOUT.
+    _DEFAULT_TIMEOUT = 10.0
+
     def __init__(self, client=None, model: str | None = None,
-                 base_url: str | None = None, api_key: str | None = None):
+                 base_url: str | None = None, api_key: str | None = None,
+                 timeout: float | None = None):
         self._client = client
         self._model = model or os.environ.get("NEMOTRON_LLM_MODEL", "nvidia/nemotron-3-super")
         self._base_url = base_url or os.environ.get("NEMOTRON_LLM_URL", "")
         self._api_key = api_key or os.environ.get("NEMOTRON_LLM_API_KEY", "EMPTY")
+        self._timeout = timeout if timeout is not None else _env_float(
+            "NEMOTRON_LLM_TIMEOUT", self._DEFAULT_TIMEOUT
+        )
 
     @classmethod
     def from_env(cls) -> NemotronClassifier | None:
@@ -159,7 +181,9 @@ class NemotronClassifier:
     def _ensure_client(self):
         if self._client is None:
             from openai import OpenAI  # pipecat-ai[openai] provides this
-            self._client = OpenAI(base_url=self._base_url, api_key=self._api_key)
+            self._client = OpenAI(
+                base_url=self._base_url, api_key=self._api_key, timeout=self._timeout
+            )
         return self._client
 
     def classify(self, text: str) -> str:
@@ -169,6 +193,7 @@ class NemotronClassifier:
                 model=self._model,
                 temperature=0,
                 max_tokens=8,
+                timeout=self._timeout,
                 messages=[{"role": "user", "content": build_prompt(text)}],
             )
             raw = resp.choices[0].message.content

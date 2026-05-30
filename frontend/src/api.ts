@@ -73,10 +73,57 @@ export interface Transcript {
   transcript: TranscriptTurn[];
 }
 
+// Default per-request timeout. Without this a dead/hung control-plane would
+// leave fetches pending forever (permanent "Connecting…"/spinner states).
+const DEFAULT_TIMEOUT_MS = 15_000;
+
+// Turn raw network/abort failures into a friendly, consistent message so the
+// UI can surface "API offline" rather than a bare `TypeError: Failed to fetch`.
+function describeFetchError(path: string, e: unknown): Error {
+  if (e instanceof DOMException && e.name === "AbortError") {
+    return new Error(`${path} → request timed out`);
+  }
+  if (e instanceof TypeError) {
+    // fetch() rejects with a TypeError when the network is unreachable.
+    return new Error(`${path} → control-plane unreachable`);
+  }
+  return e instanceof Error ? e : new Error(String(e));
+}
+
+// fetch() with an AbortController-backed timeout.
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function get<T>(path: string): Promise<T> {
-  const r = await fetch(`${BASE}${path}`);
-  if (!r.ok) throw new Error(`${path} → HTTP ${r.status}`);
-  return r.json() as Promise<T>;
+  // One automatic retry: transient network blips on read-only GETs are safe to
+  // re-attempt and recover the common "server still booting" race on load.
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const r = await fetchWithTimeout(`${BASE}${path}`);
+      if (!r.ok) throw new Error(`${path} → HTTP ${r.status}`);
+      return (await r.json()) as T;
+    } catch (e) {
+      lastErr = e;
+      // Don't retry HTTP errors (4xx/5xx are deterministic); only retry
+      // network/timeout failures, and only once.
+      const isNetwork =
+        e instanceof TypeError || (e instanceof DOMException && e.name === "AbortError");
+      if (!isNetwork || attempt === 1) break;
+    }
+  }
+  throw describeFetchError(path, lastErr);
 }
 
 export const api = {
@@ -89,12 +136,22 @@ export const api = {
   transcript: (runId?: string) =>
     get<Transcript>(runId ? `/scans/${runId}/transcript` : "/transcript/latest"),
   runScan: async (n: number, concurrency = 1): Promise<{ run_id: string; summary: Summary }> => {
-    const r = await fetch(`${BASE}/scans`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ n, concurrency, persist: false }),
-    });
-    if (!r.ok) throw new Error(`/scans → HTTP ${r.status}`);
-    return r.json();
+    // A scan runs the attacker FSM N times server-side, so it can take a while;
+    // give it a generous timeout (not retried — POST is not idempotent here).
+    try {
+      const r = await fetchWithTimeout(
+        `${BASE}/scans`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ n, concurrency, persist: false }),
+        },
+        120_000,
+      );
+      if (!r.ok) throw new Error(`/scans → HTTP ${r.status}`);
+      return r.json();
+    } catch (e) {
+      throw describeFetchError("/scans", e);
+    }
   },
 };

@@ -66,16 +66,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The pipecat base image (dailyco/pipecat-base) ships linux/arm64 ONLY, so
+      # this image must be built for arm64. ubuntu-latest is amd64, so register
+      # QEMU to emulate arm64 during the build.
+      - name: Set up QEMU (arm64 emulation)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       # Build only — verifies the Dockerfile, the pinned pipecat base, and that
-      # `uv sync --locked` resolves inside the image. Nothing is pushed.
+      # `uv sync --locked` resolves inside the image. Built for linux/arm64 (the
+      # only platform the base publishes, and the Pipecat Cloud runtime arch).
+      # Nothing is pushed.
       - name: Build server image
         uses: docker/build-push-action@v6
         with:
           context: server
           file: server/Dockerfile
+          platforms: linux/arm64
           push: false
           load: false
           tags: reddial:ci-${{ github.sha }}

@@ -25,10 +25,26 @@ make campaign N=200  # overnight batch -> scorecard.{json,html} (+ transcripts/ 
 
 ## Build & deploy the voice image
 
+The Pipecat base image (`dailyco/pipecat-base`) is published for **linux/arm64
+only** — Pipecat Cloud runs arm64. Build for arm64 with buildx; on an amd64 host
+this uses QEMU emulation (CI does this automatically). Pin a **real** tag — the
+lowest published tag is `0.1.2`; `0.0.8` never existed. Use the digest in prod.
+
 ```bash
-make build TAG=v0.1.0 BASE=dailyco/pipecat-base:0.0.8   # pin the base (never :latest in prod)
+# On an arm64 host (e.g. Apple Silicon) the default build target is already arm64:
+make build TAG=v0.1.0 BASE=dailyco/pipecat-base:0.1.20-py3.12   # never :latest in prod
+
+# On an amd64 host, build explicitly for arm64 (requires `docker buildx` + QEMU):
+docker buildx build --platform linux/arm64 \
+  --build-arg PIPECAT_BASE=dailyco/pipecat-base:0.1.20-py3.12 \
+  -t reddial:v0.1.0 server
+
 pcc deploy                                              # Pipecat Cloud (pcc-deploy.toml)
 ```
+
+> Note: the `make build` target (in `server/Makefile`) still defaults its `BASE`
+> to a `dailyco/pipecat-base:0.0.8` arg; pass `BASE=dailyco/pipecat-base:0.1.20-py3.12`
+> until that default is updated, or it will fail with a manifest-not-found error.
 
 Required env (see `.env.example`): `NVIDIA_ASR_URL`, `NEMOTRON_LLM_URL` (no defaults —
 a missing value fails loudly rather than dialing a dead dev IP), `GRADIUM_API_KEY`,

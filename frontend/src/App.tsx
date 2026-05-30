@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { MotionConfig } from "framer-motion";
 import {
   Shield,
@@ -50,11 +50,20 @@ export function App() {
   const [bellOpen, setBellOpen] = useState(false);
   const bellRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    api.health().then((h) => { setHealth("up"); setVersion(h.version); }).catch(() => setHealth("down"));
-    api.attacks().then((r) => setAttacks(r.attacks)).catch(() => {});
+  // Initial connect: kept in a callback so the UI can offer a "Retry" action
+  // when the control-plane is unreachable (instead of forcing a full reload).
+  const connect = useCallback(() => {
+    setHealth("?");
+    api.health()
+      .then((h) => { setHealth("up"); setVersion(h.version); })
+      .catch(() => setHealth("down"));
+    // Attacks/scorecard are best-effort: a missing or empty result degrades to
+    // the views' built-in empty states, so we don't surface these as errors.
+    api.attacks().then((r) => setAttacks(r.attacks ?? [])).catch(() => {});
     api.scorecardLatest().then(setSummary).catch(() => {});
   }, []);
+
+  useEffect(() => { connect(); }, [connect]);
 
   useEffect(() => {
     if (!bellOpen) return;
@@ -132,9 +141,17 @@ export function App() {
             <h1>Workspace / <span>{activeLabel}</span></h1>
           </div>
           <div className="topbar-right">
-            <div className="health-status">
-              <span className={`health-indicator ${health === "up" ? "up" : health === "down" ? "down" : ""}`} />
+            <div className="health-status" role="status" aria-live="polite">
+              <span
+                className={`health-indicator ${health === "up" ? "up" : health === "down" ? "down" : ""}`}
+                aria-hidden="true"
+              />
               {health === "up" ? `API Online · v${version}` : health === "down" ? "API Offline" : "Connecting..."}
+              {health === "down" && (
+                <button type="button" className="health-retry" onClick={connect}>
+                  Retry
+                </button>
+              )}
             </div>
 
             <div className="bell-wrap" ref={bellRef}>
@@ -186,6 +203,7 @@ export function App() {
             health={health}
             err={err}
             attacks={attacks}
+            onRetryConnect={connect}
           />
 
           {/* ── Main Content (view router) ── */}

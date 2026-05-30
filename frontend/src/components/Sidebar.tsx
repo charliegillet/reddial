@@ -9,9 +9,10 @@ interface SidebarProps {
   health: "up" | "down" | "?";
   err: string | null;
   attacks: Attack[];
+  onRetryConnect: () => void;
 }
 
-export function Sidebar({ n, setN, runScan, running, health, err, attacks }: SidebarProps) {
+export function Sidebar({ n, setN, runScan, running, health, err, attacks, onRetryConnect }: SidebarProps) {
   return (
     <aside className="sidebar">
       <div className="sidebar-section">
@@ -43,8 +44,11 @@ export function Sidebar({ n, setN, runScan, running, health, err, attacks }: Sid
           <div className="error-msg" role="alert">
             <AlertTriangle size={14} />
             <span>
-              Control-plane API offline. Start it, then reload:
+              Control-plane API offline. Start it, then retry:
               <code className="inline-code">cd server &amp;&amp; uv run uvicorn api:app --port 8080</code>
+              <button type="button" className="retry-button" onClick={onRetryConnect}>
+                Retry connection
+              </button>
             </span>
           </div>
         )}

@@ -8,7 +8,10 @@ export function ScanningScreen() {
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       className="card"
-      style={{ 
+      role="status"
+      aria-live="polite"
+      aria-label="Executing campaign — running state machine loopback and evaluating PII leakage"
+      style={{
         overflow: 'hidden', 
         position: 'relative', 
         minHeight: '400px', 
