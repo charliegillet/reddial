@@ -1,13 +1,21 @@
 import { useEffect, useState } from "react";
+import { ShieldAlert, LayoutDashboard, Shield, BarChart3, Settings, Users, Bell, Activity } from "lucide-react";
 import { api, type Attack, type Summary } from "./api";
+import { Sidebar } from "./components/Sidebar";
+import { ScorecardSummary } from "./components/ScorecardSummary";
+import { VectorTable } from "./components/VectorTable";
+import { EvidenceLog } from "./components/EvidenceLog";
+import { ScanningScreen } from "./components/ScanningScreen";
+import { motion, AnimatePresence } from "framer-motion";
+import "./styles.css";
 
 const GRADE_VAR: Record<string, string> = {
-  A: "--grade-a", B: "--grade-b", C: "--grade-c", D: "--grade-d", F: "--grade-f",
+  A: "var(--grade-a)", 
+  B: "var(--grade-b)", 
+  C: "var(--grade-c)", 
+  D: "var(--grade-d)", 
+  F: "var(--grade-f)",
 };
-
-function pct(x: number | undefined): string {
-  return `${Math.round((x ?? 0) * 100)}%`;
-}
 
 export function App() {
   const [health, setHealth] = useState<"up" | "down" | "?">("?");
@@ -25,7 +33,8 @@ export function App() {
   }, []);
 
   async function runScan() {
-    setRunning(true); setErr(null);
+    setRunning(true); 
+    setErr(null);
     try {
       const { summary } = await api.runScan(n, 4);
       setSummary(summary);
@@ -36,147 +45,108 @@ export function App() {
     }
   }
 
-  const grade = summary?.max_grade ?? "—";
-  const gradeColor = `var(${GRADE_VAR[grade] ?? "--ink-faint"})`;
-  const vectors = summary
-    ? Object.entries(summary.by_vector).sort((a, b) => b[1].leak_rate - a[1].leak_rate)
-    : [];
+  const gradeColor = GRADE_VAR[summary?.max_grade ?? ""] ?? "var(--text-tertiary)";
 
   return (
-    <div className="app">
-      <header className="topbar">
-        <div className="brand">
-          <span className="dot" />
-          <h1>RedDial</h1>
-          <span className="tag">voice-agent threat console</span>
+    <div className="app-container">
+      {/* ── Global Nav Rail ── */}
+      <nav className="nav-rail">
+        <div className="rail-brand">
+          <div className="brand-orb"><Shield size={18} strokeWidth={2.5} /></div>
         </div>
-        <span className="spacer" />
-        <div className="health">
-          <span className={`led ${health === "up" ? "up" : health === "down" ? "down" : ""}`} />
-          {health === "up" ? `API online · v${version}` : health === "down" ? "API offline" : "connecting…"}
+        <div className="rail-links">
+          <a href="#" className="rail-item active"><LayoutDashboard size={20} /></a>
+          <a href="#" className="rail-item"><BarChart3 size={20} /></a>
+          <a href="#" className="rail-item"><Users size={20} /></a>
         </div>
-      </header>
+        <div className="rail-bottom">
+          <a href="#" className="rail-item"><Settings size={20} /></a>
+        </div>
+      </nav>
 
-      <div className="safety">
-        ⚠ ALL DATA IS FAKE — Stripe test BIN (4539…) &amp; specimen SSN. Offline loopback against a mock
-        we own. No real PII, no live dialing from this console. Authorized red-teaming only.
-      </div>
-
-      <div className="grid">
-        {/* ── control column ── */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
-          <section className="panel">
-            <h2>Run scan</h2>
-            <div className="field">
-              <label htmlFor="n">attack calls (loopback)</label>
-              <input id="n" type="number" min={1} max={500} value={n}
-                onChange={(e) => setN(Math.max(1, Math.min(500, Number(e.target.value) || 1)))} />
+      <div className="app-main">
+        {/* ── Header ── */}
+        <header className="topbar">
+          <div className="topbar-left">
+            <h1>Workspace / <span>Threat Console</span></h1>
+          </div>
+          <div className="topbar-right">
+            <div className="health-status">
+              <span className={`health-indicator ${health === "up" ? "up" : health === "down" ? "down" : ""}`} />
+              {health === "up" ? `API Online · v${version}` : health === "down" ? "API Offline" : "Connecting..."}
             </div>
-            <button className="run-btn" onClick={runScan} disabled={running}>
-              {running ? "running campaign…" : "▶ launch campaign"}
-            </button>
-            {err && <div className="err">! {err}</div>}
-            <p className="note">
-              Drives the deterministic attacker FSM ↔ vulnerable mock ↔ Luhn classifier. Results are a
-              loopback scorecard, not proof against a real agent.
-            </p>
-          </section>
-
-          <section className="panel">
-            <h2>Attack library · {attacks.length}</h2>
-            <div>
-              {attacks.length === 0 && <div className="empty">no attacks loaded</div>}
-              {attacks.map((a) => (
-                <div className="atk" key={a.id}>
-                  <div><span className="id">{a.id}</span> <span className="cat">{a.category}</span></div>
-                  <div className="line">“{a.spoken_template}”</div>
-                </div>
-              ))}
+            <button className="icon-btn"><Bell size={18} /></button>
+            <div className="user-avatar">
+              <img src="https://api.dicebear.com/7.x/notionists/svg?seed=Felix" alt="User" />
             </div>
-          </section>
-        </div>
+          </div>
+        </header>
 
-        {/* ── scorecard column ── */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 22 }} className="stagger">
-          <section className="panel">
-            <h2>Vulnerability scorecard</h2>
-            {!summary ? (
-              <div className="empty">No campaign yet — launch one to generate a scorecard.</div>
-            ) : (
-              <>
-                <div className="hero">
-                  <div className="grade" style={{ color: gradeColor }}>{grade}</div>
-                  <div>
-                    <div className="stat-row">
-                      <div className="stat"><div className="v" style={{ color: gradeColor }}>{summary.max_score}</div><div className="k">vuln score</div></div>
-                      <div className="stat"><div className={`v ${summary.breach_rate > 0 ? "alert" : ""}`}>{pct(summary.breach_rate)}</div><div className="k">breach rate</div></div>
-                      <div className="stat"><div className="v">{pct(summary.leak_rate)}</div><div className="k">leak rate</div></div>
-                      <div className="stat"><div className="v">{summary.median_time_to_leak_s ?? "—"}s</div><div className="k">median time-to-leak</div></div>
-                    </div>
-                    <div className="chips">
-                      <span className="chip">{summary.total_calls} calls</span>
-                      {(summary.failed_calls ?? 0) > 0 && <span className="chip">{summary.failed_calls} failed</span>}
-                      {summary.distinct_fields_leaked.map((f) => (
-                        <span className={`chip ${f === "card" ? "hot" : ""}`} key={f}>{f}</span>
-                      ))}
-                    </div>
-                  </div>
+        {/* ── Main Layout ── */}
+        <div className="main-layout">
+          <Sidebar 
+            n={n} 
+            setN={setN} 
+            runScan={runScan} 
+            running={running} 
+            health={health} 
+            err={err} 
+            attacks={attacks} 
+          />
+
+          {/* ── Main Dashboard ── */}
+          <main className="dashboard-content">
+            <div className="content-wrapper">
+              
+              <motion.div 
+                initial={{ opacity: 0, y: -10 }} 
+                animate={{ opacity: 1, y: 0 }} 
+                className="safety-banner"
+              >
+                <div className="banner-icon"><ShieldAlert size={20} /></div>
+                <div className="banner-text">
+                  <p><strong>SYNTHETIC DATA HARNESS</strong></p>
+                  <p>All operations utilize fake PII (Stripe test BINs, specimen SSNs). Runs offline loopback against mock endpoints. No live dialing or real-world PII exposure from this console.</p>
                 </div>
-                {summary.time_note && <div className="note">⏱ {summary.time_note}</div>}
-              </>
-            )}
-          </section>
+              </motion.div>
 
-          {summary && vectors.length > 0 && (
-            <section className="panel">
-              <h2>Per-vector breakdown</h2>
-              <table className="vectors">
-                <thead>
-                  <tr><th>vector</th><th>landed</th><th style={{ width: "40%" }}>leak rate</th><th>breaches</th></tr>
-                </thead>
-                <tbody>
-                  {vectors.map(([id, v]) => {
-                    const p = Math.round(v.leak_rate * 100);
-                    const col = v.leak_rate >= 0.5 ? "var(--red)" : v.leak_rate > 0 ? "var(--amber)" : "var(--line-bright)";
-                    return (
-                      <tr key={id}>
-                        <td className="id">{id}</td>
-                        <td className="num">{v.leaks}/{v.runs}</td>
-                        <td>
-                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                            <div className="bar"><span style={{ width: `${p}%`, background: col }} /></div>
-                            <span className="num" style={{ width: 38 }}>{p}%</span>
-                          </div>
-                        </td>
-                        <td className="num">{v.breaches}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </section>
-          )}
+              <AnimatePresence mode="wait">
+                {running ? (
+                  <ScanningScreen key="scanning" />
+                ) : !summary ? (
+                  <motion.div 
+                    key="empty"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="card empty-onboarding"
+                  >
+                    <div className="empty-state">
+                      <div className="empty-icon-wrap">
+                        <Activity size={32} />
+                      </div>
+                      <h3>Ready for your first campaign</h3>
+                      <p>Run a deterministic attacker FSM against your mock voice agent to generate a vulnerability scorecard. No configuration required.</p>
+                      <button className="primary-button inline-btn" onClick={runScan}>
+                        Launch Campaign Now
+                      </button>
+                    </div>
+                  </motion.div>
+                ) : (
+                  <motion.div 
+                    key="results"
+                    style={{ display: "flex", flexDirection: "column", gap: "24px" }}
+                  >
+                    <ScorecardSummary summary={summary} gradeColor={gradeColor} />
+                    <VectorTable summary={summary} />
+                    <EvidenceLog summary={summary} />
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
-          {summary && summary.evidence_samples.length > 0 && (
-            <section className="panel">
-              <h2>Breach evidence</h2>
-              {summary.evidence_samples.map((s, i) => (
-                <div className="evidence" key={i}>
-                  <div className="head">
-                    <span className="badge-breach">BREACH</span>
-                    <span className="meta">{s.attack_id} · {s.fields.join(", ") || "—"} · {s.turns_to_first_leak ?? "—"} turns</span>
-                  </div>
-                  <pre>{s.evidence_span}</pre>
-                </div>
-              ))}
-            </section>
-          )}
+            </div>
+          </main>
         </div>
-      </div>
-
-      <div className="foot">
-        RedDial · autonomous voice red-team · offline harness · all data synthetic ·{" "}
-        <a href="https://github.com/nihalnihalani/reddial">github.com/nihalnihalani/reddial</a>
       </div>
     </div>
   );
