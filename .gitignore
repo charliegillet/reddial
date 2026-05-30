@@ -230,3 +230,7 @@ server/scorecard.html
 server/transcripts/*.json
 server/transcripts/*.wav
 !server/transcripts/.gitkeep
+
+server/transcripts/**/*.json
+server/results/
+frontend/dist/
