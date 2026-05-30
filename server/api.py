@@ -31,6 +31,7 @@ VERSION = "1.0.0"
 # Hard cap on calls per scan. Loopback is fast/deterministic, but we still bound
 # request work so the synchronous API never runs unbounded. Per API_CONTRACT.md.
 MAX_SCAN_N = 500
+MAX_CONCURRENCY = 16  # cap thread-pool fan-out on the synchronous /scans endpoint
 
 # Where the latest aggregate summary is persisted (scorecard.write_json).
 SCORECARD_PATH = "scorecard.json"
@@ -75,7 +76,8 @@ _METRICS = {
 class ScanRequest(BaseModel):
     n: int = Field(default=24, ge=1, description="Number of loopback attack calls.")
     persist: bool = Field(default=False, description="Persist per-call transcripts to disk.")
-    concurrency: int = Field(default=1, ge=1, description="Parallel calls (>1 = thread pool).")
+    concurrency: int = Field(default=1, ge=1, le=MAX_CONCURRENCY,
+                             description="Parallel calls (>1 = thread pool; capped).")
 
 
 class ScanResponse(BaseModel):
@@ -154,10 +156,11 @@ def create_scan(req: ScanRequest) -> ScanResponse:
     through this API. ``n`` is clamped to ``MAX_SCAN_N``.
     """
     n = min(max(1, req.n), MAX_SCAN_N)
+    concurrency = min(max(1, req.concurrency), MAX_CONCURRENCY)  # defense-in-depth cap
     summary = campaign_runner.run_campaign(
         n=n,
         mode="loopback",
-        concurrency=req.concurrency,
+        concurrency=concurrency,
         persist=req.persist,
     )
     run_id = summary.get("run_id")

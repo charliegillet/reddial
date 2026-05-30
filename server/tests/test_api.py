@@ -19,6 +19,15 @@ def test_healthz():
     assert body["version"] == api.VERSION
 
 
+def test_scan_concurrency_is_capped():
+    # Over-cap concurrency must be rejected by validation (not spawn 300 threads).
+    r = client.post("/scans", json={"n": 2, "concurrency": 300})
+    assert r.status_code == 422  # pydantic le=MAX_CONCURRENCY
+    # At the cap is fine.
+    ok = client.post("/scans", json={"n": 2, "concurrency": api.MAX_CONCURRENCY})
+    assert ok.status_code == 200
+
+
 def test_readyz():
     r = client.get("/readyz")
     assert r.status_code == 200

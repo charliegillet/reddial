@@ -9,31 +9,38 @@ marked **[converged]** (high confidence).
 
 ## Verdict
 
-> **NOT production-ready.** RedDial today is a **strong hackathon demo / prototype of the *offline*
-> harness**, not a shippable product. The part that is real, tested, and safe — the deterministic
-> text loopback (attacker FSM ↔ self-authored vulnerable mock ↔ Luhn classifier → scorecard) — is
-> **not the product**. The actual product (autonomously *calling real third-party voice agents*
-> over PSTN and producing a trustworthy vulnerability report) is **unbuilt where it counts,
-> untested, and legally hazardous to ship as-is.**
+> **Original audit:** NOT production-ready — a hackathon prototype of the offline harness.
 >
-> **Safe/ready for:** running the offline loopback as an internal demo or research harness (after
-> the two latent-crash fixes + CI).
-> **NOT ready for:** any live outbound dialing, customer-facing scans, or presenting the scorecard
-> numbers as evidence about real agents.
+> **Now (after Phases 0–3 + the production-hardening pass):** the offline product is **production-grade
+> and pilot-ready** — the deterministic engine, classifier, control-plane API, web dashboard, fail-closed
+> dialing safety gate, CI/CD with a coverage gate, deploy workflow, and runbooks are all built and tested
+> (129 tests, ~81% scoped coverage). The live voice path is **safe to attempt and operable**, wired
+> end-to-end behind the safety gate.
 >
-> **Distance to production (devil's advocate estimate): ~2–4 months** of focused work.
+> **The one thing that remains FALSE-if-claimed:** RedDial has **never placed a real call to an agent it
+> didn't author**. Every scorecard number still grades its own mock. That is the lone blocker between
+> "pilot-ready alpha" and "production-ready product," and it is **not code** — it requires an operator to
+> run `efficacy_run.py --mode live` with real NVIDIA+Twilio keys against a consented agent (see
+> [`DEPLOY.md`](DEPLOY.md)) and record the result.
+>
+> **Ready for:** internal/pilot use of the offline harness + API + dashboard; a gated, consented live
+> trial. **Still NOT ready for:** selling the scorecard numbers as evidence about real agents until one
+> live run exists.
 
 ## Scorecard
 
-| Dimension | Grade | One-line |
+Two grades per dimension: **(audit)** = the original teardown · **(now)** = after Phases 0–3 +
+the production-hardening pass (API, dashboard, CI/CD, ops).
+
+| Dimension | audit → now | One-line (now) |
 |---|---|---|
-| Offline core (engine + classifier) | **B+** | Solid, deterministic, 83% line coverage, prior false-positive bug fixed |
-| Code quality & architecture | **C** | Core clean; voice layer doesn't import clean & isn't what deploys |
-| Security & safety (as a live dialer) | **F** | Zero enforced consent/allowlist/rate-limit on a PII-extracting autodialer |
-| Security & safety (secrets/PII hygiene) | **A−** | Clean git history, fake-PII verified, no PII logging, no XSS |
-| Testing & reliability | **D** | 33% overall coverage; voice/integration layer 0%; no CI; latent crashes |
-| Ops / deploy / integrations | **D** | Wrong deploy entrypoint, undeclared deps, LAN-IP defaults, no CI/CD |
-| Product proof (real-world efficacy) | **F** | Every number comes from grading its own mock; never called a real agent |
+| Offline core (engine + classifier) | B+ → **A−** | Deterministic, ~81% scoped coverage, false-positive bug fixed, model-based posture path |
+| Code quality & architecture | C → **B** | Core clean + tested; voice layer imports clean under uv; role-dispatch entrypoint |
+| Security & safety (as a live dialer) | F → **B+** | Fail-closed gate (kill-switch off, allowlist, consent, call cap/rate limit) enforced in code |
+| Security & safety (secrets/PII hygiene) | A− → **A** | Clean git history, fake-PII verified, no PII logging, no XSS, SECURITY.md threat model |
+| Testing & reliability | D → **B+** | 129 tests, CI w/ coverage gate (≥70%), per-call isolation, retries, latent crashes fixed |
+| Ops / deploy / integrations | D → **B** | Fixed entrypoint, declared+locked deps, pinned image, CI/CD, deploy workflow, runbook, API + dashboard |
+| Product proof (real-world efficacy) | F → **F** | UNCHANGED — still never called a real agent; every number grades its own mock |
 
 ---
 
