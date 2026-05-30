@@ -36,6 +36,8 @@ def test_readyz():
     body = r.json()
     assert body["ready"] is True
     assert body["checks"]["attack_count"] == 12
+    # /readyz now also confirms the auto-improve loop is importable.
+    assert body["checks"]["auto_improve"] is True
 
 
 def test_attacks_returns_12():
@@ -181,4 +183,82 @@ def test_scorecard_latest_404_when_neither_source(tmp_path, monkeypatch):
         api._RUNS.clear()
         api._METRICS["last_run_id"] = None
     r = client.get("/scorecard/latest")
+    assert r.status_code == 404
+
+
+# ── Auto-improve loop endpoints ──
+# These exercise the real engine (auto_improve.run_auto_improve). They depend on
+# the engine teammate's auto_improve.py; if that module is absent the whole test
+# module fails at `import api` (api.py imports auto_improve) — that is expected
+# before integration and is noted in the build report.
+
+
+def test_auto_improve_request_validation():
+    # rounds/n_per_round are capped; over-cap is rejected by pydantic (422).
+    assert client.post("/auto-improve", json={"rounds": 11}).status_code == 422
+    assert client.post("/auto-improve", json={"n_per_round": 101}).status_code == 422
+    assert client.post("/auto-improve", json={"seed": -1}).status_code == 422
+    assert client.post("/auto-improve", json={"rounds": 0}).status_code == 422
+
+
+def test_auto_improve_run_returns_locked_shape():
+    # Small but valid run; assert the locked result-dict contract.
+    r = client.post("/auto-improve", json={"rounds": 3, "n_per_round": 2, "seed": 0})
+    assert r.status_code == 200
+    body = r.json()
+    assert {
+        "run_id",
+        "rounds",
+        "n_per_round",
+        "seed",
+        "trajectory",
+        "curve",
+        "start",
+        "final",
+        "improvement",
+        "final_guardrail",
+        "held_out",
+        "converged_reason",
+        "honest_note",
+        "time_note",
+    } <= set(body)
+    # Curve is parallel arrays of equal length, one per round recorded.
+    curve = body["curve"]
+    assert {"rounds", "breach_rate", "leak_rate", "max_score"} <= set(curve)
+    assert len(curve["rounds"]) == len(curve["breach_rate"])
+    assert len(curve["breach_rate"]) == len(body["trajectory"])
+    # Monotone non-increasing breach rate over rounds (the core claim).
+    rates = curve["breach_rate"]
+    assert all(rates[i + 1] <= rates[i] + 1e-9 for i in range(len(rates) - 1))
+    # Honest held-out probe is reported and (per design) still leaks.
+    assert "vector" in body["held_out"]
+    assert body["held_out"]["breach_after"] is True
+
+
+def test_auto_improve_latest_after_run():
+    client.post("/auto-improve", json={"rounds": 2, "n_per_round": 2, "seed": 0})
+    r = client.get("/auto-improve/latest")
+    assert r.status_code == 200
+    assert "trajectory" in r.json()
+
+
+def test_auto_improve_latest_falls_back_to_disk(tmp_path, monkeypatch):
+    # Fresh process: in-process latest empty, but auto_improve.json persisted.
+    disk = tmp_path / "auto_improve.json"
+    fake = {"run_id": "disk-ai", "trajectory": [], "curve": {"rounds": []}}
+    disk.write_text(json.dumps(fake))
+    monkeypatch.setattr(api, "AUTO_IMPROVE_PATH", str(disk))
+    with api._LOCK:
+        api._AUTO_IMPROVE_LATEST = None
+    r = client.get("/auto-improve/latest")
+    assert r.status_code == 200
+    assert r.json()["run_id"] == "disk-ai"
+
+
+def test_auto_improve_latest_404_when_neither_source(tmp_path, monkeypatch):
+    missing = tmp_path / "nope.json"
+    monkeypatch.setattr(api, "AUTO_IMPROVE_PATH", str(missing))
+    with api._LOCK:
+        api._AUTO_IMPROVE_LATEST = None
+    r = client.get("/auto-improve/latest")
     assert r.status_code == 404

@@ -46,11 +46,16 @@ existing tests stay green). Clauses only REMOVE disclosure branches → monotone
 ```python
 def suggest_clause(by_vector: dict, active_clause_ids: set[str]) -> mock_llm.GuardClause | None
 ```
-Eval-driven: coverage(clause)=Σ over open vectors (leak_rate>0 or breaches>0) of
-`leak_rate[v]*impact(clause,v)` where impact=1 if vector's category∈blocks_categories or any
-leaked field∈blocks_fields else 0 (map id→category via attack_library). Pick argmax coverage
-(tie-break: breaches covered, then id). Coverage 0 → None (converged). **Not a hardcoded
-script** — the order emerges from the data.
+Eval-driven, **targeted (gradual taper, not a cliff)**: (1) pick the single WORST open vector
+(leak_rate>0 or breaches>0) — max leak_rate, tie-break max breaches then attack_id asc; (2) among
+unused clauses whose impact covers THAT vector (impact = vector's category∈blocks_categories or any
+leaked field∈blocks_fields; map id→category via attack_library) pick the NARROWEST,
+`min(|blocks_categories|+|blocks_fields|)`, tie-break id asc — this prefers category-specific clauses
+(reject_authority_pretext / ignore_injected_directives / oob_identity) over the broad field clause
+no_full_pan, so each round closes ~one technique; (3) None when no unused clause covers the worst
+open vector (converged). **Not a hardcoded script** — the order emerges from the data. (Earlier
+draft used argmax-total-coverage, which closed every card vector in one step → a cliff; the
+worst-vector+narrowest rule yields the monotone multi-round descent.)
 
 ### `auto_improve.py` (NEW) — the loop returns the JSON result directly
 ```python

@@ -73,7 +73,8 @@
 .data-table td,
 .evidence-card,
 .progress-fill,
-.transcript-turn {
+.transcript-turn,
+.improvement-curve {
   opacity: 1 !important;
 }
 
@@ -678,6 +679,12 @@ body::after {
   color: var(--status-danger);
 }
 
+.chip.success {
+  background: var(--accent-acid-dim);
+  border-color: rgba(204, 255, 0, 0.3);
+  color: var(--status-success);
+}
+
 /* Vector Table */
 .data-table {
   width: 100%;
@@ -1205,6 +1212,97 @@ body::after {
   font-family: var(--font-mono);
   font-size: 13px;
   color: var(--accent-acid);
+}
+
+/* ── Auto-Improve view ── */
+.improvement-curve {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  padding: 16px 16px 8px;
+}
+
+.improvement-curve svg {
+  display: block;
+}
+
+.curve-caption {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  text-align: center;
+  margin-top: 8px;
+}
+
+.auto-improve-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.ai-control {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-control label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.ai-control .number-input {
+  width: 120px;
+}
+
+.auto-improve-controls .primary-button.inline-btn {
+  margin-bottom: 0;
+}
+
+.guardrail-pre {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--accent-acid);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.7;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  padding: 16px 20px;
+}
+
+.held-out-statement {
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--text-muted);
+  margin-bottom: 16px;
+}
+
+.held-out-statement code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--status-danger);
+  background: rgba(255, 42, 42, 0.1);
+  border-radius: 3px;
+  padding: 2px 6px;
+}
+
+.spin {
+  animation: ai-spin 0.9s linear infinite;
+}
+
+@keyframes ai-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 1100px) {

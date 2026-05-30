@@ -234,3 +234,5 @@ server/transcripts/*.wav
 server/transcripts/**/*.json
 server/results/
 frontend/dist/
+
+server/auto_improve.json
