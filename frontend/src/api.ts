@@ -73,36 +73,54 @@ export interface Transcript {
   transcript: TranscriptTurn[];
 }
 
-// Default per-request timeout. Without this a dead/hung control-plane would
-// leave fetches pending forever (permanent "Connecting…"/spinner states).
-const DEFAULT_TIMEOUT_MS = 15_000;
-
-// Turn raw network/abort failures into a friendly, consistent message so the
-// UI can surface "API offline" rather than a bare `TypeError: Failed to fetch`.
-function describeFetchError(path: string, e: unknown): Error {
-  if (e instanceof DOMException && e.name === "AbortError") {
-    return new Error(`${path} → request timed out`);
-  }
-  if (e instanceof TypeError) {
-    // fetch() rejects with a TypeError when the network is unreachable.
-    return new Error(`${path} → control-plane unreachable`);
-  }
-  return e instanceof Error ? e : new Error(String(e));
+// ── Auto-improve loop (iterative eval-driven guardrail hardening) ──
+// One round of the loop. `summary` reuses the existing Summary scorecard shape.
+export interface RoundRecord {
+  round: number;
+  clause_added: string | null;   // clause id (e.g. "reject_authority_pretext"); null on baseline
+  guardrail_clauses: string[];
+  summary: Summary;
+  vectors_blocked: string[];
+  vectors_newly_blocked: string[];
+  vectors_still_breaching: string[];
 }
 
-// fetch() with an AbortController-backed timeout.
-async function fetchWithTimeout(
-  url: string,
-  init: RequestInit = {},
-  timeoutMs = DEFAULT_TIMEOUT_MS,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
+// Per-round metric series for the improvement curve (parallel arrays).
+export interface AutoImproveCurve {
+  rounds: number[];
+  breach_rate: number[];
+  leak_rate: number[];
+  max_score: number[];
+}
+
+interface AutoImproveEndpoint {
+  breach_rate: number;
+  leak_rate: number;
+  max_score: number;
+  max_grade: string;
+}
+
+// The locked result dict returned by POST /auto-improve and GET /auto-improve/latest.
+export interface AutoImproveResult {
+  run_id: string;
+  rounds: number;
+  n_per_round: number;
+  seed: number;
+  trajectory: RoundRecord[];
+  curve: AutoImproveCurve;
+  start: AutoImproveEndpoint;
+  final: AutoImproveEndpoint;
+  improvement: {
+    breach_rate_delta: number;
+    max_score_delta: number;
+    rounds_to_converge: number;
+    converged: boolean;
+  };
+  final_guardrail: string[];
+  held_out: { vector: string; breach_before: boolean; breach_after: boolean };
+  converged_reason: string;
+  honest_note: string;
+  time_note: string;
 }
 
 async function get<T>(path: string): Promise<T> {
@@ -153,5 +171,21 @@ export const api = {
     } catch (e) {
       throw describeFetchError("/scans", e);
     }
+  },
+  // Latest auto-improve result (in-process, disk-fallback). 404 -> throws.
+  autoImproveLatest: () => get<AutoImproveResult>("/auto-improve/latest"),
+  // Run the OFFLINE iterative auto-improve loop (forces mock + loopback).
+  runAutoImprove: async (
+    rounds = 5,
+    nPerRound = 24,
+    seed = 0,
+  ): Promise<AutoImproveResult> => {
+    const r = await fetch(`${BASE}/auto-improve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rounds, n_per_round: nPerRound, seed }),
+    });
+    if (!r.ok) throw new Error(`/auto-improve → HTTP ${r.status}`);
+    return r.json();
   },
 };

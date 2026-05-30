@@ -26,6 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 import attack_library as lib
+import auto_improve
 import campaign_runner
 import loopback
 import scorecard
@@ -48,6 +49,11 @@ MAX_CONCURRENCY = 16  # cap thread-pool fan-out on the synchronous /scans endpoi
 
 # Where the latest aggregate summary is persisted (scorecard.write_json).
 SCORECARD_PATH = "scorecard.json"
+
+# Auto-improve loop caps (bound the synchronous request) + persistence path.
+MAX_AUTO_ROUNDS = 10
+MAX_PER_ROUND = 100
+AUTO_IMPROVE_PATH = "auto_improve.json"
 
 # How many recent run summaries to keep in the in-process history (Analytics view).
 HISTORY_LIMIT = 50
@@ -94,16 +100,21 @@ _METRICS = {
     "last_breach_rate": 0.0,
     "last_run_id": None,
 }
+# In-process latest auto-improve result dict (the locked run_auto_improve shape),
+# or None until the first POST /auto-improve this process. Disk-backed fallback is
+# AUTO_IMPROVE_PATH so the view survives a `uvicorn` restart.
+_AUTO_IMPROVE_LATEST: dict | None = None
 
 
-def _read_scorecard_disk() -> dict | None:
-    """Read the persisted latest aggregate summary from SCORECARD_PATH, or None.
+def _read_json_disk(path: str) -> dict | None:
+    """Read a persisted JSON object dict from ``path``, or None on any failure.
 
-    Used as the fallback for /scorecard/latest so the dashboard does not load
-    blank after a `uvicorn` restart wipes the in-process registry.
+    Generalized fallback reader used by /scorecard/latest (SCORECARD_PATH) and
+    /auto-improve/latest (AUTO_IMPROVE_PATH) so the dashboard does not load blank
+    after a `uvicorn` restart wipes the in-process registry.
     """
     try:
-        raw = Path(SCORECARD_PATH).read_text()
+        raw = Path(path).read_text()
     except (OSError, ValueError):
         return None
     try:
@@ -111,6 +122,11 @@ def _read_scorecard_disk() -> dict | None:
     except json.JSONDecodeError:
         return None
     return data if isinstance(data, dict) else None
+
+
+def _read_scorecard_disk() -> dict | None:
+    """Read the persisted latest aggregate summary from SCORECARD_PATH, or None."""
+    return _read_json_disk(SCORECARD_PATH)
 
 
 def _transcript_payload(run_id: str | None, result: loopback.CallResult) -> dict:
@@ -239,6 +255,14 @@ class ScanResponse(BaseModel):
     summary: dict
 
 
+class AutoImproveRequest(BaseModel):
+    rounds: int = Field(default=5, ge=1, le=MAX_AUTO_ROUNDS,
+                        description="Improvement rounds (round 0 = WEAK baseline).")
+    n_per_round: int = Field(default=24, ge=1, le=MAX_PER_ROUND,
+                             description="Loopback calls per attack per round.")
+    seed: int = Field(default=0, ge=0, description="Deterministic seed.")
+
+
 class AttackOut(BaseModel):
     id: str
     category: str
@@ -306,12 +330,16 @@ def readyz() -> ReadyResponse:
     """Readiness — confirms the attack library is loaded and runner is importable."""
     attacks_loaded = bool(getattr(lib, "ATTACKS", None))
     runner_ready = hasattr(campaign_runner, "run_campaign")
+    auto_improve_ready = hasattr(auto_improve, "run_auto_improve")
     checks = {
         "attack_library_loaded": attacks_loaded,
         "attack_count": len(lib.ATTACKS),
         "campaign_runner": runner_ready,
+        "auto_improve": auto_improve_ready,
     }
-    return ReadyResponse(ready=attacks_loaded and runner_ready, checks=checks)
+    return ReadyResponse(
+        ready=attacks_loaded and runner_ready and auto_improve_ready, checks=checks
+    )
 
 
 @app.get("/attacks", response_model=AttacksResponse)
@@ -461,6 +489,50 @@ def scorecard_latest() -> dict:
     if summary is None:
         raise HTTPException(status_code=404, detail="no scorecard yet — run a scan first")
     return summary
+
+
+@app.post("/auto-improve")
+def auto_improve_run(req: AutoImproveRequest) -> dict:
+    """Run the OFFLINE iterative auto-improve loop and return the locked result dict.
+
+    Forces the deterministic mock target + in-process loopback (``target_mode``
+    stays at the engine default 'mock'); there is no way to trigger live/PSTN
+    dialing through this API. ``rounds``/``n_per_round`` are bounded by the pydantic
+    caps. Stores the result in-process as the latest and persists it to
+    AUTO_IMPROVE_PATH so /auto-improve/latest survives a `uvicorn` restart.
+    """
+    global _AUTO_IMPROVE_LATEST
+    result = auto_improve.run_auto_improve(
+        rounds=req.rounds,
+        calls_per_attack=req.n_per_round,
+        seed=req.seed,
+    )
+    with _LOCK:
+        _AUTO_IMPROVE_LATEST = result
+    # Best-effort persistence: a write failure must not fail the request.
+    try:
+        Path(AUTO_IMPROVE_PATH).write_text(json.dumps(result))
+    except OSError:
+        pass
+    return result
+
+
+@app.get("/auto-improve/latest")
+def auto_improve_latest() -> dict:
+    """Return the most recent auto-improve result.
+
+    In-process latest first; if empty (e.g. right after a `uvicorn` restart) FALLS
+    BACK to the persisted AUTO_IMPROVE_PATH on disk. 404 if neither source has data.
+    """
+    with _LOCK:
+        result = _AUTO_IMPROVE_LATEST
+    if result is None:
+        result = _read_json_disk(AUTO_IMPROVE_PATH)
+    if result is None:
+        raise HTTPException(
+            status_code=404, detail="no auto-improve run yet — run one first"
+        )
+    return result
 
 
 @app.get("/metrics", response_model=MetricsResponse)

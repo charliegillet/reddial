@@ -234,4 +234,6 @@ server/transcripts/*.wav
 server/transcripts/**/*.json
 server/results/
 frontend/dist/
-.rocketride/
+
+server/auto_improve.json
+frontend/tsconfig.tsbuildinfo
