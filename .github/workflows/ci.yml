@@ -19,7 +19,7 @@ jobs:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -64,7 +64,7 @@ jobs:
     name: Docker build (no push)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # The pipecat base image (dailyco/pipecat-base) ships linux/arm64 ONLY, so
       # this image must be built for arm64. ubuntu-latest is amd64, so register
@@ -101,7 +101,7 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
