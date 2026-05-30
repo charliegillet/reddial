@@ -9,8 +9,11 @@ and what still can't be live.
   run, and the monotone auto-improve curve. Needs **no keys**. This is the fixture that
   makes the demo and the 157-test suite reproducible — it is NOT deleted.
 - **Live LLM mode (`make live-llm` / `live_attack.py`):** a **real Nemotron attacker ↔ real
-  Nemotron target ↔ real Luhn classifier**, over **text**. Proven working: the real target
-  reads back the planted card and the real classifier catches it (`breach @ turn 1`, ~2.3s/turn).
+  Nemotron target ↔ real Luhn classifier**, over **text**. In a development run against the
+  configured endpoint the real target read back the planted card and the real classifier caught
+  it (breach at turn 1, ~2s/turn) — reproduce with `make live-llm`; each run writes its own
+  `results/live_attack_*.json`. (Numbers are from one observed run, not a code guarantee — a
+  well-aligned target under a sane guardrail will instead refuse; see below.)
 
 ## What is genuinely LIVE (verified against `nvidia/nemotron-3-super`)
 | Piece | Live? | Notes |
