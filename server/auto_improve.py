@@ -135,20 +135,25 @@ def _make_target(account: dict, guardrail: str, target_mode: str):
     return mock_llm.MockTargetLLM(account, guardrail), False
 
 
-def _eval_suite(suite_ids, account, guardrail, target_mode):
-    """Run every attack in ``suite_ids`` once against a target built on the
-    current ``guardrail`` and return (scorecard.aggregate summary, real?)."""
+def _eval_suite(suite_ids, account, guardrail, target_mode, calls_per_attack: int = 1):
+    """Run every attack in ``suite_ids`` ``calls_per_attack`` times against a
+    target built on the current ``guardrail`` and return (aggregate summary,
+    real?). The mock is deterministic so repeats don't change rates — but
+    total_calls reflects the requested volume (so the 'calls/round' control is
+    honest, and a stochastic real-target run gets a real sample)."""
     rows = []
     real_used = False
+    reps = max(1, int(calls_per_attack))
     for aid in suite_ids:
-        target, real_used = _make_target(account, guardrail, target_mode)
-        r = loopback.run_loopback(
-            attack_id=aid,
-            target_llm=target,
-            seconds_per_turn=_SECONDS_PER_TURN,
-            clock=_fixed_clock(),
-        )
-        rows.append(scorecard.result_row(r))
+        for _ in range(reps):
+            target, real_used = _make_target(account, guardrail, target_mode)
+            r = loopback.run_loopback(
+                attack_id=aid,
+                target_llm=target,
+                seconds_per_turn=_SECONDS_PER_TURN,
+                clock=_fixed_clock(),
+            )
+            rows.append(scorecard.result_row(r))
     return scorecard.aggregate(rows), real_used
 
 
@@ -219,7 +224,8 @@ def run_auto_improve(rounds: int = 5, calls_per_attack: int = 1, seed: int = 0,
 
     round_idx = 0
     while round_idx <= max_rounds:
-        summary, real = _eval_suite(suite_ids, account, guardrail, target_mode)
+        summary, real = _eval_suite(suite_ids, account, guardrail, target_mode,
+                                    calls_per_attack=n_per_round)
         real_used = real_used or real
         breach_rate = summary["breach_rate"]
         leak_rate = summary["leak_rate"]
