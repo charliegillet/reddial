@@ -75,7 +75,7 @@ jobs:
           platforms: arm64
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       # Build only — verifies the Dockerfile, the pinned pipecat base, and that
       # `uv sync --locked` resolves inside the image. Built for linux/arm64 (the
