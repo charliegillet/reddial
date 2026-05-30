@@ -1,0 +1,91 @@
+name: Deploy (Pipecat Cloud)
+
+# MANUAL ONLY. There is no push/PR trigger by design: deploying RedDial puts a
+# voice bot online, so a deploy is always a deliberate, operator-initiated action.
+on:
+  workflow_dispatch:
+    inputs:
+      role:
+        description: "Bot role to deploy (REDDIAL_ROLE)"
+        required: true
+        default: "target"
+        type: choice
+        options:
+          - target
+          - attacker
+          - flower
+      image_tag:
+        description: "Image tag to build & deploy"
+        required: true
+        default: "manual"
+        type: string
+
+concurrency:
+  group: deploy-pipecat-cloud
+  cancel-in-progress: false
+
+jobs:
+  # Re-run the CI gate so we never deploy a red build. (workflow_dispatch does
+  # not run CI automatically, so we reproduce the lint+test gate here.)
+  gate:
+    name: Test gate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Sync dependencies (locked)
+        run: uv sync --locked
+      - name: Lint
+        run: uv run ruff check .
+      - name: Test
+        run: uv run pytest tests/ -q
+
+  deploy:
+    name: Build & deploy to Pipecat Cloud
+    needs: gate
+    runs-on: ubuntu-latest
+    # The `production` environment lets you add required reviewers / protection
+    # rules in repo Settings -> Environments. Secrets below resolve from it.
+    environment: production
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies (locked)
+        # pcc ships as the `pipecatcloud` package (provides the `pcc` CLI) and is
+        # already a project dependency, so it lands in the synced venv.
+        run: uv sync --locked
+
+      - name: Authenticate to Pipecat Cloud
+        env:
+          PIPECAT_CLOUD_API_KEY: ${{ secrets.PIPECAT_CLOUD_API_KEY }}
+        run: |
+          if [ -z "${PIPECAT_CLOUD_API_KEY}" ]; then
+            echo "::error::PIPECAT_CLOUD_API_KEY secret is not set"; exit 1
+          fi
+          # The pcc CLI reads PIPECAT_CLOUD_API_KEY from the environment for
+          # non-interactive auth; no `pcc auth login` needed in CI.
+
+      - name: Deploy
+        env:
+          PIPECAT_CLOUD_API_KEY: ${{ secrets.PIPECAT_CLOUD_API_KEY }}
+          REDDIAL_ROLE: ${{ inputs.role }}
+        run: |
+          echo "Deploying role=${REDDIAL_ROLE} tag=${{ inputs.image_tag }}"
+          # pcc reads server/pcc-deploy.toml for agent name / profile / scaling.
+          # Runtime secrets (NVIDIA/Gradium/Twilio/...) are managed in the Pipecat
+          # Cloud secret set (see scripts/setup-secrets.sh), NOT injected here.
+          uv run pcc deploy

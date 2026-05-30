@@ -5,8 +5,15 @@ on:
     branches: ["**"]
   pull_request:
 
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # ── Lint + type-check + tests (the gate other workflows depend on) ──────────
   test:
+    name: Lint, type-check & test
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -25,8 +32,52 @@ jobs:
       - name: Lint
         run: uv run ruff check .
 
+      # Type-check is NON-BLOCKING: there are ~30 preexisting pyright errors in
+      # the voice/integration layer (posture.py, preflight.py, the pipecat-typed
+      # test_nemotron_llm.py, etc.). Surfacing them is useful, but failing CI on
+      # the pre-existing backlog would block all work. Tighten to blocking once
+      # the backlog is burned down (drop `continue-on-error`).
+      - name: Type-check (non-blocking)
+        run: uv run pyright
+        continue-on-error: true
+
       # Run ONLY the curated suite. A bare `pytest` would try to collect the
       # pipecat-dependent test_nemotron_llm.py at the repo root; `tests/` (plus
-      # testpaths in pyproject) keeps collection to the supported tests.
+      # testpaths in pyproject) keeps collection to the supported tests. This
+      # step is the authoritative pass/fail signal and ALWAYS runs.
       - name: Test
         run: uv run pytest tests/ -q
+
+      # Coverage with a 70% floor over the deterministic product logic. pytest-cov
+      # is a declared dev dep, and [tool.coverage.run] omit (in pyproject.toml)
+      # excludes the key-gated voice/starter modules that can't be unit-tested
+      # here. Current scoped coverage ~81%.
+      - name: Coverage (>=70%)
+        run: >-
+          uv run pytest tests/
+          --cov=.
+          --cov-report=term-missing
+          --cov-fail-under=70
+
+  # ── Docker image builds (catch Dockerfile / lockfile breakage). No push. ────
+  docker-build:
+    name: Docker build (no push)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build only — verifies the Dockerfile, the pinned pipecat base, and that
+      # `uv sync --locked` resolves inside the image. Nothing is pushed.
+      - name: Build server image
+        uses: docker/build-push-action@v6
+        with:
+          context: server
+          file: server/Dockerfile
+          push: false
+          load: false
+          tags: reddial:ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

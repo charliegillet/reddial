@@ -1,0 +1,40 @@
+# RedDial control-plane API — local run.
+#
+# This brings up ONLY the offline control-plane API (api:app), which drives the
+# offline FAKE-PII loopback harness over HTTP for the dashboard/monitoring. It
+# does NOT run the live voice bot and does NOT place calls — outbound dialing
+# stays CLI-only behind the fail-closed safety gate (safety_controls.py).
+#
+# Usage:
+#   cd server
+#   cp .env.example .env      # the API itself needs no live keys for offline scans
+#   docker compose up --build
+#   curl localhost:8080/healthz   # -> {"status":"ok",...}
+#
+# Assumption: api.py exposes `app` (FastAPI) and `GET /healthz` per API_CONTRACT.md.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: reddial-api:local
+    # Override the image's default pipecat entrypoint with the control-plane API.
+    command: ["uv", "run", "uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8080"]
+    env_file:
+      - .env
+    environment:
+      # Force the safe role and keep the dialing kill-switch OFF regardless of
+      # what .env says, since this service only serves the offline API.
+      REDDIAL_ROLE: target
+      REDDIAL_DIALING_ENABLED: ""
+    ports:
+      - "8080:8080"
+    healthcheck:
+      # /healthz touches no dependencies (pure liveness) per the API contract.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/healthz', timeout=3).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
