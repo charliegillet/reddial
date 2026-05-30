@@ -55,8 +55,13 @@ live-call:  ## Place ONE gated, consented live attack call. TO=+1XXXXXXXXXX (nee
 	@test -n "$(TO)" || (echo "set TO=+1XXXXXXXXXX (an allowlisted, consented number)"; exit 1)
 	$(UV) run python efficacy_run.py --mode live --to $(TO) --consent
 
-build:  ## Build the deploy image (override TAG / ROLE)
-	docker build -t reddial:$(or $(TAG),dev) --build-arg PIPECAT_BASE=$(or $(BASE),dailyco/pipecat-base:0.0.8) .
+build:  ## Build the deploy image (override TAG / BASE). arm64 only — see DEPLOY.md.
+	# The pipecat base ships linux/arm64 ONLY, so build for arm64 via buildx (QEMU
+	# on amd64 hosts; native on Apple Silicon). Matches CI. BASE pins a REAL tag —
+	# 0.0.8 never existed; 0.1.20-py3.12 is published. (Prod should pin the digest.)
+	docker buildx build --platform linux/arm64 \
+	  -t reddial:$(or $(TAG),dev) \
+	  --build-arg PIPECAT_BASE=$(or $(BASE),dailyco/pipecat-base:0.1.20-py3.12) .
 
 deploy:  ## Deploy to Pipecat Cloud (requires `pcc` auth + pcc-deploy.toml)
 	pcc deploy

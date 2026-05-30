@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import uuid
 
 logger = logging.getLogger("reddial.cekura")
@@ -323,6 +324,47 @@ def register_personas(attacks) -> list[dict]:
     return results
 
 
+def _egress_pan_safe(transcript_json: list[dict]) -> tuple[bool, str | None]:
+    """Fail-closed egress check: is it safe to ship this transcript to Cekura?
+
+    RedDial only ever exfiltrates PLANTED honeytoken PII (Stripe test BIN, specimen
+    SSN — see fake_accounts.py). Shipping the verbatim transcript to a third party
+    (api.cekura.ai) is safe ONLY for that synthetic data. There is otherwise no
+    code-level guarantee that a future live voice leg won't surface a REAL card.
+
+    Rule (reuses leak_classifier's PAN primitives — _number_spans + luhn_valid):
+      - ALLOW when every Luhn-valid 13-19 digit number span equals the planted
+        honeytoken PAN. This keeps the existing loopback / fake-PII path posting.
+      - REFUSE (graceful no-op) when a FOREIGN Luhn-valid PAN appears, UNLESS the
+        operator explicitly acks a consented, synthetic-seeded live target via
+        REDDIAL_ALLOW_LIVE_OBSERVABILITY=1.
+
+    Returns (safe, reason): reason is a non-PII description set only when refusing.
+    """
+    if os.environ.get("REDDIAL_ALLOW_LIVE_OBSERVABILITY") == "1":
+        return True, None
+    try:
+        from leak_classifier import PLANTED, _number_spans, luhn_valid  # type: ignore
+    except Exception:
+        try:
+            from server.leak_classifier import PLANTED, _number_spans, luhn_valid  # type: ignore
+        except Exception:
+            # Can't load the classifier — fail closed, refuse to ship.
+            return False, "leak_classifier unavailable; refusing egress (fail-closed)"
+
+    planted_pan = re.sub(r"\D", "", PLANTED.get("card", ""))
+    for turn in transcript_json or []:
+        for span in _number_spans(str(turn.get("content", ""))):
+            if luhn_valid(span) and span != planted_pan:
+                return (
+                    False,
+                    "foreign Luhn-valid PAN in transcript "
+                    "(set REDDIAL_ALLOW_LIVE_OBSERVABILITY=1 for a consented "
+                    "synthetic-seeded live target)",
+                )
+    return True, None
+
+
 def _to_cekura_transcript(transcript) -> list[dict]:
     """Map a RedDial loopback transcript (``[{role: attacker|target, text}]``)
     to Cekura's format: ``[{role: Testing Agent|Main Agent, content,
@@ -396,6 +438,16 @@ def post_observability(call_result, call_id: str | None = None) -> bool:
 
     # call_id: prefer the structured RunContext id; fall back to uuid. ≤100 chars.
     cid = (call_id or f"reddial::{attack_id}::{uuid.uuid4().hex[:12]}")[:100]
+
+    # FAIL-CLOSED EGRESS GUARD (GAP M1): never ship a transcript carrying a
+    # foreign (non-honeytoken) Luhn-valid PAN to api.cekura.ai without an explicit
+    # operator ack. Graceful no-op — logged, returns False, never crashes/blocks.
+    safe, reason = _egress_pan_safe(transcript_json)
+    if not safe:
+        logger.warning(
+            "Cekura observability REFUSED for call_id=%s: %s", cid, reason
+        )
+        return False
 
     payload: dict = {
         "call_id": cid,

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 from pathlib import Path
 
@@ -71,13 +72,17 @@ app = FastAPI(
     description=_DESCRIPTION,
 )
 
-# Permissive CORS for the dashboard. Acceptable here because the API is
-# offline-only and serves FAKE data exclusively (no secrets, no live actions).
+# CORS allowlist for the dashboard. Config-driven via REDDIAL_CORS_ORIGINS
+# (comma-separated), defaulting to the local dashboard origin (Vite :5173).
+# Credentials stay off and methods are limited to what the dashboard uses.
+DEFAULT_CORS_ORIGINS = ["http://localhost:5173"]
+_cors_env = os.environ.get("REDDIAL_CORS_ORIGINS", "")
+_cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()] or DEFAULT_CORS_ORIGINS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=False,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 

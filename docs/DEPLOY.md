@@ -31,10 +31,11 @@ this uses QEMU emulation (CI does this automatically). Pin a **real** tag — th
 lowest published tag is `0.1.2`; `0.0.8` never existed. Use the digest in prod.
 
 ```bash
-# On an arm64 host (e.g. Apple Silicon) the default build target is already arm64:
-make build TAG=v0.1.0 BASE=dailyco/pipecat-base:0.1.20-py3.12   # never :latest in prod
+# `make build` now always builds linux/arm64 via buildx (QEMU on amd64, native on
+# Apple Silicon) and defaults BASE to the real, published 0.1.20-py3.12 tag:
+make build TAG=v0.1.0                                   # never :latest in prod
 
-# On an amd64 host, build explicitly for arm64 (requires `docker buildx` + QEMU):
+# Equivalent explicit invocation (what `make build` runs under the hood):
 docker buildx build --platform linux/arm64 \
   --build-arg PIPECAT_BASE=dailyco/pipecat-base:0.1.20-py3.12 \
   -t reddial:v0.1.0 server
@@ -42,9 +43,26 @@ docker buildx build --platform linux/arm64 \
 pcc deploy                                              # Pipecat Cloud (pcc-deploy.toml)
 ```
 
-> Note: the `make build` target (in `server/Makefile`) still defaults its `BASE`
-> to a `dailyco/pipecat-base:0.0.8` arg; pass `BASE=dailyco/pipecat-base:0.1.20-py3.12`
-> until that default is updated, or it will fail with a manifest-not-found error.
+> **Pin the digest in prod.** `0.1.20-py3.12` is a moving tag; for reproducible
+> deploys resolve and pin the immutable digest in `server/Dockerfile`
+> (`dailyco/pipecat-base@sha256:...`). The tag is fine for CI/dev.
+
+### Selecting the bot role at deploy time (audit C3)
+
+Pipecat Cloud injects runtime env **only** from the deploy **secret set**
+(`reddial-secrets`, named in `server/pcc-deploy.toml`) — **not** from the shell
+that runs `pcc deploy`, and `pcc-deploy.toml` accepts no inline `env`/`role` key
+(adding one is rejected as an unexpected key). So `REDDIAL_ROLE` must live in the
+secret set. Set it before deploying:
+
+```bash
+pcc secrets set reddial-secrets REDDIAL_ROLE=attacker --skip   # target | attacker | flower
+pcc deploy
+```
+
+The `Deploy (Pipecat Cloud)` workflow does this automatically: its role dropdown
+upserts `REDDIAL_ROLE` into `reddial-secrets` (an upsert that leaves other
+secrets intact) right before `pcc deploy`, so the dropdown is no longer inert.
 
 Required env (see `.env.example`): `NVIDIA_ASR_URL`, `NEMOTRON_LLM_URL` (no defaults —
 a missing value fails loudly rather than dialing a dead dev IP), `GRADIUM_API_KEY`,
