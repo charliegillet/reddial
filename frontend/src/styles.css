@@ -727,6 +727,18 @@ body::after {
   color: var(--status-success);
 }
 
+.chip.danger {
+  background: rgba(255, 42, 42, 0.1);
+  border-color: rgba(255, 42, 42, 0.3);
+  color: var(--status-danger);
+}
+
+/* Chips carrying a status icon align icon + label on one baseline. */
+.chip svg {
+  vertical-align: -2px;
+  margin-right: 4px;
+}
+
 /* Vector Table */
 .data-table {
   width: 100%;

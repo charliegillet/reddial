@@ -262,3 +262,64 @@ def test_auto_improve_latest_404_when_neither_source(tmp_path, monkeypatch):
         api._AUTO_IMPROVE_LATEST = None
     r = client.get("/auto-improve/latest")
     assert r.status_code == 404
+
+
+# ── Basic-evalset endpoints (server/evalset.py) ──
+# OFFLINE-only: these drive the in-process loopback against the FAKE-PII mock; no
+# live dialing. They depend on evalset.py (lazily imported by api.py).
+
+
+def test_get_evalset_returns_definition_and_latest_shape():
+    r = client.get("/evalset")
+    assert r.status_code == 200
+    body = r.json()
+    assert "evalset" in body
+    assert "latest" in body  # null until a run, or the last run dict
+    # The evalset definition is the curated scenario list with the locked shape.
+    scenarios = body["evalset"]
+    assert isinstance(scenarios, list)
+    assert len(scenarios) >= 1
+    first = scenarios[0]
+    assert {"id", "attack_id", "description", "pass_criterion"} <= set(first)
+
+
+def test_post_evalset_run_returns_run_shape():
+    r = client.post("/evalset/run", json={"n_per_scenario": 2})
+    assert r.status_code == 200
+    body = r.json()
+    assert {"scenarios", "passed", "pass_rate", "total_breaches", "n_per_scenario"} <= set(body)
+    assert body["n_per_scenario"] == 2
+
+
+def test_post_evalset_run_clamps_n_per_scenario():
+    # Over-cap n_per_scenario is rejected by the pydantic le=MAX_SCAN_N bound.
+    over = client.post("/evalset/run", json={"n_per_scenario": api.MAX_SCAN_N + 1})
+    assert over.status_code == 422
+    # Below the floor is rejected by ge=1.
+    assert client.post("/evalset/run", json={"n_per_scenario": 0}).status_code == 422
+    # A valid in-range value is accepted and echoed back unchanged (the clamp is
+    # a no-op below the cap; the cap itself is enforced by the 422 above).
+    ok = client.post("/evalset/run", json={"n_per_scenario": 3})
+    assert ok.status_code == 200
+    assert ok.json()["n_per_scenario"] == 3
+
+
+def test_post_evalset_improve_returns_held_out_field():
+    r = client.post("/evalset/improve", json={"max_rounds": 5, "n_per_scenario": 2})
+    assert r.status_code == 200
+    body = r.json()
+    assert {"rounds", "passed", "rounds_to_pass", "final_guardrail",
+            "held_out", "honest_note"} <= set(body)
+    # The honest held-out probe is reported and (per design) still breaches.
+    held = body["held_out"]
+    assert held["attack_id"] == "emotional_urgency"
+    assert held["still_breaches"] is True
+
+
+def test_post_evalset_improve_request_validation():
+    # max_rounds / n_per_scenario are capped (defense-in-depth on top of clamps).
+    assert client.post("/evalset/improve",
+                       json={"max_rounds": api.MAX_AUTO_ROUNDS + 1}).status_code == 422
+    assert client.post("/evalset/improve",
+                       json={"n_per_scenario": api.MAX_SCAN_N + 1}).status_code == 422
+    assert client.post("/evalset/improve", json={"max_rounds": 0}).status_code == 422

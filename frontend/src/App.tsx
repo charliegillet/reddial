@@ -9,12 +9,14 @@ import {
   MessagesSquare,
   Bell,
   TrendingDown,
+  ClipboardCheck,
 } from "lucide-react";
 import { api, type Attack, type Summary } from "./api";
 import { Sidebar } from "./components/Sidebar";
 import { DashboardView } from "./views/DashboardView";
 import { AnalyticsView } from "./views/AnalyticsView";
 import { AutoImproveView } from "./views/AutoImproveView";
+import { EvalsetView } from "./views/EvalsetView";
 import { LibraryView } from "./views/LibraryView";
 import { SettingsView } from "./views/SettingsView";
 import { ConversationView } from "./views/ConversationView";
@@ -35,6 +37,7 @@ type ViewId =
   | "conversation"
   | "analytics"
   | "auto-improve"
+  | "evalset"
   | "library"
   | "settings";
 
@@ -43,6 +46,7 @@ const NAV: { id: ViewId; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "conversation", label: "Conversation", icon: MessagesSquare },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
   { id: "auto-improve", label: "Auto-Improve", icon: TrendingDown },
+  { id: "evalset", label: "Evalset", icon: ClipboardCheck },
   { id: "library", label: "Attack Library", icon: LibraryIcon },
   { id: "settings", label: "Settings", icon: SettingsIcon },
 ];
@@ -229,6 +233,7 @@ export function App() {
               {activeView === "conversation" && <ConversationView summary={summary} />}
               {activeView === "analytics" && <AnalyticsView />}
               {activeView === "auto-improve" && <AutoImproveView />}
+              {activeView === "evalset" && <EvalsetView />}
               {activeView === "library" && <LibraryView attacks={attacks} />}
               {activeView === "settings" && (
                 <SettingsView apiBase={API_BASE} version={version} health={health} />

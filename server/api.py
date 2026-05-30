@@ -56,6 +56,9 @@ MAX_AUTO_ROUNDS = 10
 MAX_PER_ROUND = 100
 AUTO_IMPROVE_PATH = "auto_improve.json"
 
+# Where the latest basic-evalset run result is persisted (restart resilience).
+EVALSET_PATH = "evalset.json"
+
 # How many recent run summaries to keep in the in-process history (Analytics view).
 HISTORY_LIMIT = 50
 
@@ -109,6 +112,10 @@ _METRICS = {
 # or None until the first POST /auto-improve this process. Disk-backed fallback is
 # AUTO_IMPROVE_PATH so the view survives a `uvicorn` restart.
 _AUTO_IMPROVE_LATEST: dict | None = None
+# In-process latest basic-evalset run result (the run_evalset shape), or None until
+# the first POST /evalset/run this process. Disk-backed fallback is EVALSET_PATH so
+# the view survives a `uvicorn` restart.
+_LAST_EVALSET: dict | None = None
 
 
 def _read_json_disk(path: str) -> dict | None:
@@ -266,6 +273,18 @@ class AutoImproveRequest(BaseModel):
     n_per_round: int = Field(default=24, ge=1, le=MAX_PER_ROUND,
                              description="Loopback calls per attack per round.")
     seed: int = Field(default=0, ge=0, description="Deterministic seed.")
+
+
+class EvalsetRunRequest(BaseModel):
+    n_per_scenario: int = Field(default=8, ge=1, le=MAX_SCAN_N,
+                                description="Loopback calls per scenario (clamped to MAX_SCAN_N).")
+
+
+class EvalsetImproveRequest(BaseModel):
+    max_rounds: int = Field(default=5, ge=1, le=MAX_AUTO_ROUNDS,
+                            description="Improvement rounds (clamped to MAX_AUTO_ROUNDS).")
+    n_per_scenario: int = Field(default=8, ge=1, le=MAX_SCAN_N,
+                                description="Loopback calls per scenario (clamped to MAX_SCAN_N).")
 
 
 class AttackOut(BaseModel):
@@ -538,6 +557,61 @@ def auto_improve_latest() -> dict:
             status_code=404, detail="no auto-improve run yet — run one first"
         )
     return result
+
+
+@app.get("/evalset")
+def evalset_list() -> dict:
+    """Return the basic evalset definition + the latest run result (or null).
+
+    OFFLINE-only: the evalset runs the in-process loopback against the FAKE-PII
+    mock target; it dials nothing. ``latest`` is the in-process last run, falling
+    back to the persisted EVALSET_PATH after a `uvicorn` restart, else null.
+    """
+    import evalset  # lazy: keep api importable even before evalset.py lands
+    with _LOCK:
+        latest = _LAST_EVALSET
+    if latest is None:
+        latest = _read_json_disk(EVALSET_PATH)
+    return {"evalset": evalset.BASIC_EVALSET, "latest": latest}
+
+
+@app.post("/evalset/run")
+def evalset_run(req: EvalsetRunRequest) -> dict:
+    """Run the OFFLINE basic evalset and return the run result.
+
+    ``n_per_scenario`` is clamped to MAX_SCAN_N (defense-in-depth on top of the
+    pydantic cap). Stores the result in-process as the latest and persists it to
+    EVALSET_PATH so /evalset survives a `uvicorn` restart.
+    """
+    global _LAST_EVALSET
+    import evalset  # lazy: keep api importable even before evalset.py lands
+    n_per_scenario = min(max(1, req.n_per_scenario), MAX_SCAN_N)
+    result = evalset.run_evalset(n_per_scenario=n_per_scenario)
+    with _LOCK:
+        _LAST_EVALSET = result
+    # Best-effort persistence: a write failure must not fail the request.
+    try:
+        Path(EVALSET_PATH).write_text(json.dumps(result))
+    except OSError as exc:
+        logger.warning("evalset persist failed: %s", exc)
+    return result
+
+
+@app.post("/evalset/improve")
+def evalset_improve(req: EvalsetImproveRequest) -> dict:
+    """Run the OFFLINE evalset improvement loop until pass and return the result.
+
+    ``max_rounds``/``n_per_scenario`` are clamped (defense-in-depth on top of the
+    pydantic caps). There is no live/PSTN path — this only drives the in-process
+    loopback against the FAKE-PII mock target.
+    """
+    import evalset  # lazy: keep api importable even before evalset.py lands
+    max_rounds = min(max(1, req.max_rounds), MAX_AUTO_ROUNDS)
+    n_per_scenario = min(max(1, req.n_per_scenario), MAX_SCAN_N)
+    return evalset.improve_until_pass(
+        max_rounds=max_rounds,
+        n_per_scenario=n_per_scenario,
+    )
 
 
 @app.get("/metrics", response_model=MetricsResponse)

@@ -244,3 +244,5 @@ frontend/tsconfig.tsbuildinfo
 /auto_improve.json
 results/
 efficacy_live_*.json
+server/evalset.json
+.omc/

@@ -3,7 +3,7 @@
 UV ?= uv
 
 .PHONY: help install test lint fmt loopback campaign efficacy scorecard \
-        cekura-check dashboard build deploy clean
+        evalset evalset-improve cekura-check cekura-evalset dashboard build deploy clean
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -31,8 +31,23 @@ campaign:  ## Offline campaign -> scorecard.{json,html} (N=36, override: make ca
 efficacy:  ## One honestly-labeled loopback efficacy artifact (results/)
 	$(UV) run python efficacy_run.py --mode loopback
 
+evalset:  ## Run the OFFLINE basic evalset -> PASS/FAIL + pass_rate (no keys)
+	$(UV) run python -c "import evalset; r=evalset.run_evalset(); \
+	print('PASS' if r['passed'] else 'FAIL','| pass_rate',r['pass_rate'])"
+
+evalset-improve:  ## Improve until the basic evalset passes -> rounds_to_pass + final guardrail
+	$(UV) run python -c "import evalset; r=evalset.improve_until_pass(); \
+	print('PASS' if r['passed'] else 'FAIL','| rounds_to_pass',r['rounds_to_pass'],'| guardrail',r['final_guardrail'])"
+
 cekura-check:  ## Probe Cekura connectivity (loud status, not a silent no-op)
 	$(UV) run python -c "import cekura_integration as C; print(C.check_connection())"
+
+cekura-evalset:  ## Publish the basic evalset + post its run verdict to Cekura (needs CEKURA_* in .env; graceful no-op without)
+	$(UV) run python -c "from dotenv import load_dotenv; load_dotenv('.env'); \
+import evalset, evalset_cekura as EC; \
+pub=EC.publish_evalset(); print('scenarios published:', pub['published'], '| stub', pub['stub']); \
+run=evalset.run_evalset(); print('evalset', 'PASS' if run['passed'] else 'FAIL', '| pass_rate', run['pass_rate']); \
+res=EC.post_evalset_results(run); print('results posted:', res['posted'], '/', res['total'], '| stub', res['stub'])"
 
 cekura-sync:  ## Push the persona pack + one loopback run to Cekura (needs CEKURA_* in .env)
 	$(UV) run python -c "from dotenv import load_dotenv; load_dotenv('.env'); \
