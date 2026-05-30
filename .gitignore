@@ -236,3 +236,4 @@ server/results/
 frontend/dist/
 
 server/auto_improve.json
+frontend/tsconfig.tsbuildinfo
