@@ -1,6 +1,49 @@
 # RedDial — Production-Readiness Assessment
 
-**Date:** 2026-05-30 · **Method:** 5-agent parallel audit (code quality, security/safety,
+> ## ▶ Audit #2 — 2026-05-31 (wiring + production pass, post-build)
+>
+> Re-audited after the control-plane API, dashboard, Conversation view, auto-improve loop,
+> Cekura fix, and live-call wiring landed. 5-agent team (wiring · code · security · ops · devil's
+> advocate) — reports: [wiring](audit/wiring.md) · [code-quality-2](audit/code-quality-2.md) ·
+> [security-2](audit/security-2.md) · [ops-2](audit/ops-2.md) · [production-devils-advocate](audit/production-devils-advocate.md).
+>
+> **Is everything wired properly?** ✅ **YES** — all 8 flows traced against the *live* system
+> (scan, auto-improve, conversation, analytics, Cekura→campaign, voice dispatcher→`/ws`, nav,
+> imports). No broken/orphaned/mismatched wiring. 151 tests pass · CI green · ~78% scoped coverage.
+>
+> **Is it production *level*?** ⚠️ **Partially — production-grade as an OFFLINE/internal harness;
+> NOT yet a hardened multi-tenant service, and the live product is unproven.** Maturity: **late-alpha**.
+> Two facts hold the verdict back (both honest, neither a wiring break):
+> 1. The **live voice path has never executed** — wired + safe, but no real call placed (the one true gap).
+> 2. The **API has no auth / is single-user** (CORS `*`, in-process state) — an offline console, not a SaaS.
+> Scorecard/auto-improve numbers are self-graded vs the mock (honestly labeled).
+>
+> | Dimension (now) | Grade |
+> |---|---|
+> | End-to-end wiring | **A** (verified live, all flows connect) |
+> | Offline engine + API + auto-improve | **A−** |
+> | Code quality | **B+** |
+> | Security — dialing gate / secrets / PII | **A−** (fail-closed, no bypass; results/ now gitignored) |
+> | Testing & CI | **B+** (151 tests, CI green, +frontend gate) |
+> | Ops / deploy | **B** |
+> | Service hardening (auth, multi-tenant) | **D** (single-user offline tool) |
+> | Real-world product proof (live call) | **F** (never executed) |
+>
+> **Fixes applied this pass:** 🔴 `_emit_live_artifact` no longer auto-asserts `proves_real_world_efficacy`
+> on a live breach (now `null` + operator-must-verify note); 🔴 the `final_guardrail` `[object Object]`
+> render (engine now returns clause-text strings); 🟡 the inert `rounds` control (now bounds the loop);
+> 🟡 untracked the root `scorecard.json` + broadened gitignore (results/ live transcripts may hold real PII);
+> 🟡 `run.sh` frees the web port too; 🟡 added a **frontend CI gate** (tsc+build); 🟡 omit `smoke_voice.py`
+> from coverage. Still open (by design): one recorded live call vs a non-self agent; API auth/multi-tenancy.
+>
+> **Verdict:** ship-ready as the **offline harness + demo + Auto-Improve entry**; for a real product, the
+> next milestones are (1) one recorded gated live call, (2) API auth + persistence/multi-tenancy.
+
+---
+
+## Audit #1 — 2026-05-30 (original)
+
+**Method:** 5-agent parallel audit (code quality, security/safety,
 testing/reliability, ops/deploy, + an adversarial devil's advocate). Per-dimension detail in
 [`docs/audit/`](audit/). Findings cross-checked: items found independently by ≥2 auditors are
 marked **[converged]** (high confidence).

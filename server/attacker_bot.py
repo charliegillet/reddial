@@ -94,13 +94,18 @@ def _emit_live_artifact(transcript: list[dict], breached: bool, turns: int) -> s
         path.write_text(json.dumps({
             "run_id": rid,
             "mode": "live",
-            "target_kind": "real-agent",
-            "proves_real_world_efficacy": bool(breached),
+            # HONESTY: the bot cannot know whether the dialed target was authored by
+            # this team. A breach here is NOT self-certifying proof — an operator
+            # must confirm the target is a non-self-authored, consented agent and
+            # set this true by hand. We never auto-assert real-world efficacy.
+            "target_kind": "live-call (operator must verify the target is non-self-authored)",
+            "proves_real_world_efficacy": None,
             "breach": bool(breached),
             "turns": turns,
             "transcript": transcript,
-            "note": "Captured from a live attacker_bot call. Verify the target is a "
-                    "consented agent your team did NOT author for this to be evidence.",
+            "note": "Captured from a live attacker_bot call. This is evidence ONLY if "
+                    "the target is a consented agent your team did NOT author — confirm "
+                    "that and set proves_real_world_efficacy=true manually.",
         }, indent=2, default=str))
         logger.info("wrote live efficacy artifact: %s (breach=%s)", path, breached)
         return str(path)
