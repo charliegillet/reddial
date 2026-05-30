@@ -32,6 +32,7 @@ from loguru import logger
 
 import attack_library as lib
 from attacker_policy import AttackerPolicy
+from env_utils import clean_env
 
 # leak_classifier is a pure module (regex/Luhn ground truth); safe to import here.
 try:
@@ -327,7 +328,7 @@ async def _run_bot_impl(transport, max_turns: int = 12):
     tts = GradiumTTSService(
         api_key=os.environ["GRADIUM_API_KEY"],
         settings=GradiumTTSService.Settings(
-            voice=os.environ.get("GRADIUM_VOICE_ID", "Eu9iL_CYe8N-Gkx_"),
+            voice=clean_env("GRADIUM_VOICE_ID", "Eu9iL_CYe8N-Gkx_"),
         ),
     )
 
