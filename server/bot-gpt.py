@@ -55,6 +55,7 @@ from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPI
 from pipecat.turns.user_turn_strategies import FilterIncompleteUserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 
+from env_utils import clean_env
 from mock_backend import BOUQUETS, KNOWN_CUSTOMERS
 
 load_dotenv(override=True)
@@ -359,7 +360,7 @@ async def run_bot(
     llm = OpenAIResponsesLLMService(
         api_key=os.environ["OPENAI_API_KEY"],
         settings=OpenAIResponsesLLMService.Settings(
-            model=os.getenv("OPENAI_MODEL", "gpt-4.1"),
+            model=clean_env("OPENAI_MODEL", "gpt-4.1"),
             system_instruction=system_instruction,
         ),
     )
@@ -368,7 +369,7 @@ async def run_bot(
     tts = GradiumTTSService(
         api_key=os.environ["GRADIUM_API_KEY"],
         settings=GradiumTTSService.Settings(
-            voice=os.getenv("GRADIUM_VOICE_ID", "_6Aslh2DxfmnRLmP"),
+            voice=clean_env("GRADIUM_VOICE_ID", "_6Aslh2DxfmnRLmP"),
         ),
     )
 
