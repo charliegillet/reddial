@@ -15,8 +15,15 @@ unset, and comment-leaked values all fall back to ``default`` while a real value
 is passed through unchanged.
 
 (The real root fix lives in ``.env.example``: comments are moved to their own
-line so freshly-copied ``.env`` files never leak. ``clean_env`` is the defensive
-backstop for ``.env`` files already on disk in the old format.)
+line so freshly-copied ``.env`` files never leak — that fix covers EVERY key.
+``clean_env`` is the in-code backstop for ``.env`` files already on disk in the
+old format, applied to the specific reads that fed the live failure: the four
+bots' ``GRADIUM_VOICE_ID`` and bot-gpt's ``OPENAI_MODEL``.)
+
+SAFETY: ``clean_env`` truncates at the FIRST ``#``, so it is only safe for keys
+whose legitimate values never contain ``#`` (voice ids, model names — never a
+URL with a fragment, a password, or a delimited list). Do NOT route such keys
+through it; for those, the ``.env.example`` root fix is the protection.
 """
 
 import os

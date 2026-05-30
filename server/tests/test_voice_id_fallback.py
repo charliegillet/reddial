@@ -29,11 +29,17 @@ Two layers:
 
              (os.getenv(KEY) or "").split("#", 1)[0].strip() or DEFAULT
 
-The four production resolution sites that were fixed (and are pinned below):
+The four production-bot voice sites that were fixed (and are pinned below):
   * target_bot.py      (default "Eu9iL_CYe8N-Gkx_")
   * bot-nemotron.py    (default "Eu9iL_CYe8N-Gkx_")
   * bot-gpt.py         (default "_6Aslh2DxfmnRLmP")
   * attacker_bot.py    (default "Eu9iL_CYe8N-Gkx_")
+
+bot-gpt.py's OPENAI_MODEL read (same bug class) is also routed through clean_env
+and source-pinned (``test_openai_model_uses_clean_env``). smoke_voice.py uses
+clean_env too but is a manual diagnostic, not a production bot, so it is
+intentionally left out of the bot ``_FIXED_SITES`` pin. The ``.env.example``
+root fix is guarded by ``test_env_example_has_no_leaked_comment_values``.
 
 WHY NOT IMPORT-AND-CALL THE BOTS?
 ---------------------------------
@@ -79,7 +85,7 @@ _FIXED_SITES = [
 
 def _resolve() -> str:
     """The voice-resolution contract — calls the REAL production helper
-    (env_utils.clean_env, used at target_bot.py:428 et al.): empty, unset, AND
+    (env_utils.clean_env, used at target_bot.py:430 et al.): empty, unset, AND
     comment-leaked all -> default; a real value passes through."""
     return clean_env(_KEY, _DEFAULT)
 
@@ -187,3 +193,40 @@ def test_fixed_site_uses_clean_env(filename, default):
         f"{filename} reverted to fragile raw os.getenv/environ.get form: {resolution!r}"
     )
     assert default in resolution, f"{filename} default voice changed unexpectedly: {resolution!r}"
+
+
+# bot-gpt.py's OPENAI_MODEL read is the same bug class (blank-value+comment leak)
+# and was also routed through clean_env — pin it so a revert is caught too.
+_OPENAI_CLEAN_FORM = re.compile(
+    r"""clean_env\(\s*["']OPENAI_MODEL["']\s*,\s*["'][^"']+["']\s*\)"""
+)
+_OPENAI_FRAGILE_FORM = re.compile(r"""os\.(?:getenv|environ\.get)\(\s*["']OPENAI_MODEL["']""")
+
+
+def test_openai_model_uses_clean_env():
+    """bot-gpt.py must resolve OPENAI_MODEL via clean_env (not a raw getenv form
+    that the same comment leak defeats)."""
+    path = os.path.join(_SERVER_DIR, "bot-gpt.py")
+    with open(path, encoding="utf-8") as fh:
+        lines = [ln for ln in fh if "OPENAI_MODEL" in ln and not ln.lstrip().startswith("#")]
+    assert lines, "no OPENAI_MODEL resolution found in bot-gpt.py"
+    resolution = next((ln for ln in lines if "clean_env(" in ln), None)
+    assert resolution is not None, "bot-gpt.py has no clean_env OPENAI_MODEL resolution"
+    assert _OPENAI_CLEAN_FORM.search(resolution), (
+        f"bot-gpt.py not using clean_env(KEY, DEFAULT) for OPENAI_MODEL: {resolution!r}"
+    )
+    assert not _OPENAI_FRAGILE_FORM.search(resolution), (
+        f"bot-gpt.py reverted OPENAI_MODEL to fragile raw form: {resolution!r}"
+    )
+
+
+def test_env_example_has_no_leaked_comment_values():
+    """Guards the ROOT fix: parsing .env.example must yield NO value that is a
+    leaked inline comment (a string starting with '#'). Reintroducing a
+    blank-value-plus-inline-comment line would regress the dotenv leak."""
+    from dotenv import dotenv_values
+
+    path = os.path.join(_SERVER_DIR, ".env.example")
+    parsed = dotenv_values(path)
+    leaked = {k: v for k, v in parsed.items() if v and v.lstrip().startswith("#")}
+    assert not leaked, f".env.example reintroduced comment-leaked values: {leaked}"

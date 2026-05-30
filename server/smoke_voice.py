@@ -37,6 +37,8 @@ import os
 import sys
 import time
 
+from env_utils import clean_env
+
 # Per-stage hard timeouts (seconds). Live endpoints, so keep generous but bounded.
 LLM_TIMEOUT = float(os.getenv("SMOKE_LLM_TIMEOUT", "60"))
 ASR_TIMEOUT = float(os.getenv("SMOKE_ASR_TIMEOUT", "10"))
@@ -199,7 +201,7 @@ async def stage_tts() -> bool | None:
         return False
 
     url = os.getenv("GRADIUM_TTS_URL", "wss://api.gradium.ai/api/speech/tts")
-    voice = os.getenv("GRADIUM_VOICE_ID", "Eu9iL_CYe8N-Gkx_") or "Eu9iL_CYe8N-Gkx_"
+    voice = clean_env("GRADIUM_VOICE_ID", "Eu9iL_CYe8N-Gkx_")
     headers = {"x-api-key": api_key, "x-api-source": "reddial-smoke"}
     ctx = "smoke-check"
     t0 = time.monotonic()
