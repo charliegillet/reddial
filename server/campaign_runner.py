@@ -21,6 +21,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import attack_library as lib
+import cekura_integration
 import loopback
 import run_context
 import scorecard
@@ -31,6 +32,27 @@ logger = logging.getLogger("reddial.campaign")
 # call audio). ~9s/turn is a realistic phone-call exchange; the scorecard labels
 # the resulting time-to-leak as "modeled" so it is never presented as live audio.
 MODELED_SECONDS_PER_TURN = 9.0
+
+
+def _maybe_post_cekura(result, call_id: str | None = None) -> None:
+    """Ship one call's result to Cekura observability for evaluation.
+
+    This is the wiring that makes the eval loop real: without it the Cekura
+    integration is dead code (it returns 201 in isolation but nothing flows
+    during an actual campaign). It is a graceful no-op when no CEKURA_API_KEY
+    is set, and it must NEVER break a call — Cekura is an optional eval sink,
+    so any error here is swallowed (logged at warning).
+
+    Args:
+        result:  loopback.CallResult (or dict) — the full call record including
+                 transcript; must be passed before scorecard.result_row() strips it.
+        call_id: structured RunContext correlation id (run_id-NNNN-attack_id);
+                 threaded through to Cekura so call logs are cross-referenceable.
+    """
+    try:
+        cekura_integration.post_observability(result, call_id=call_id)
+    except Exception as e:  # noqa: BLE001 — eval ingestion must not abort a call
+        logger.warning("cekura post skipped: %s: %s", type(e).__name__, e)
 
 
 def _with_retries(fn, attempts: int, base_delay: float = 0.5, sleep=time.sleep):
@@ -71,6 +93,10 @@ def run_one(attack: lib.Attack, mode: str = "loopback",
         )
         if ctx is not None:
             ctx.persist_call(index, attack.id, result)
+        # Pass the structured RunContext call_id so Cekura logs are
+        # cross-referenceable with our own transcripts/<run_id>/ records.
+        cid = ctx.call_id(index, attack.id) if ctx is not None else None
+        _maybe_post_cekura(result, call_id=cid)
         return scorecard.result_row(result)
     if mode == "pstn":
         raise NotImplementedError(

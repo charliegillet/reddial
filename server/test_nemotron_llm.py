@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from pipecat.services.openai.llm import OpenAILLMService  # noqa: E402
 
-from nemotron_llm import VLLMOpenAILLMService  # noqa: E402
+from nemotron_llm import EMPTY_CONTENT_FALLBACK, VLLMOpenAILLMService  # noqa: E402
 
 
 def _chunk(*, content=None, tool_calls=None, reasoning_content=None, role=None):
@@ -114,6 +114,76 @@ def test_no_content_turn_never_stops_ttfb():
                 await svc.stop_ttfb_metrics()
         assert svc._ttft_armed is False
         assert stop_calls == []
+
+    asyncio.run(run())
+
+
+def _pyd_chunk(*, content=None, reasoning=None, finish_reason=None):
+    """A real OpenAI ChatCompletionChunk (pydantic) so model_copy works in the guard."""
+    from openai.types.chat import ChatCompletionChunk
+    from openai.types.chat.chat_completion_chunk import Choice, ChoiceDelta
+
+    delta = ChoiceDelta(role="assistant", content=content)
+    if reasoning is not None:
+        # vLLM reasoning fleets attach this as an extra field on the delta.
+        object.__setattr__(delta, "reasoning", reasoning)
+    return ChatCompletionChunk(
+        id="x",
+        created=0,
+        model="m",
+        object="chat.completion.chunk",
+        choices=[Choice(index=0, delta=delta, finish_reason=finish_reason)],
+    )
+
+
+def test_reasoning_only_turn_emits_fallback_content():
+    """A reasoning-only turn (no visible content) must yield one fallback content chunk."""
+
+    async def run():
+        svc = VLLMOpenAILLMService(model="m", api_key="EMPTY", base_url="http://x/v1")
+        upstream = _FakeStream(
+            [
+                _pyd_chunk(reasoning="thinking hard..."),
+                _pyd_chunk(reasoning=" still thinking...", finish_reason="length"),
+            ]
+        )
+        with patch.object(
+            OpenAILLMService, "get_chat_completions", new=AsyncMock(return_value=upstream)
+        ):
+            wrapped = await svc.get_chat_completions(context=None)
+            contents = [
+                c.choices[0].delta.content
+                async for c in wrapped
+                if c.choices[0].delta.content
+            ]
+        # Exactly one synthesized fallback content chunk was emitted.
+        assert contents == [EMPTY_CONTENT_FALLBACK]
+        assert svc._ttft_armed is True
+
+    asyncio.run(run())
+
+
+def test_turn_with_content_emits_no_fallback():
+    """A turn that already emits content must NOT get a fallback appended."""
+
+    async def run():
+        svc = VLLMOpenAILLMService(model="m", api_key="EMPTY", base_url="http://x/v1")
+        upstream = _FakeStream(
+            [
+                _pyd_chunk(reasoning="brief thought"),
+                _pyd_chunk(content="Hello", finish_reason="stop"),
+            ]
+        )
+        with patch.object(
+            OpenAILLMService, "get_chat_completions", new=AsyncMock(return_value=upstream)
+        ):
+            wrapped = await svc.get_chat_completions(context=None)
+            contents = [
+                c.choices[0].delta.content
+                async for c in wrapped
+                if c.choices[0].delta.content
+            ]
+        assert contents == ["Hello"]  # no fallback appended
 
     asyncio.run(run())
 

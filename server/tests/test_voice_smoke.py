@@ -47,5 +47,6 @@ def test_check_connection_is_loud_without_key(monkeypatch):
 
 
 def test_observability_path_corrected():
-    # Per docs/REFERENCES.md the real path is observability/send-calls.
-    assert "observability/send-calls" in C._OBSERVABILITY_PATH
+    # Verified against Cekura's live OpenAPI spec: the real ingest route is
+    # POST /observability/v1/observe/ (the old /observability/send-calls 404'd).
+    assert "observability/v1/observe" in C._OBSERVABILITY_PATH

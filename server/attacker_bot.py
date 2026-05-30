@@ -130,7 +130,7 @@ def _dial_guard():
 
 
 def build_attacker_twiml(host: str | None = None) -> str:
-    """TwiML that bridges the outbound PSTN leg back to our /attacker-ws media WS.
+    """TwiML that bridges the outbound PSTN leg back to our /ws media WS.
 
     Streams to the route the Pipecat runner ACTUALLY serves for telephony media:
     ``/ws`` (pipecat.runner.run registers ``@app.websocket("/ws")`` and dispatches
