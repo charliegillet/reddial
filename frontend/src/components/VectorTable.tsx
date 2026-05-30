@@ -7,14 +7,16 @@ interface VectorTableProps {
 }
 
 export function VectorTable({ summary }: VectorTableProps) {
-  const vectors = Object.entries(summary.by_vector).sort((a, b) => b[1].leak_rate - a[1].leak_rate);
+  const vectors = Object.entries(summary.by_vector ?? {}).sort(
+    (a, b) => (b[1].leak_rate ?? 0) - (a[1].leak_rate ?? 0)
+  );
 
   if (vectors.length === 0) return null;
 
   return (
-    <motion.div 
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
+    <motion.div
+      initial={{ y: 12 }}
+      animate={{ y: 0 }}
       transition={{ duration: 0.4, delay: 0.1 }}
       className="card"
     >
@@ -33,14 +35,15 @@ export function VectorTable({ summary }: VectorTableProps) {
         </thead>
         <tbody>
           {vectors.map(([id, v], index) => {
-            const p = Math.round(v.leak_rate * 100);
-            const col = v.leak_rate >= 0.5 ? "var(--status-danger)" : v.leak_rate > 0 ? "var(--status-warning)" : "var(--primary-blue)";
+            const rate = v.leak_rate ?? 0;
+            const p = Math.round(rate * 100);
+            const col = rate >= 0.5 ? "var(--status-danger)" : rate > 0 ? "var(--status-warning)" : "var(--primary-blue)";
             
             return (
-              <motion.tr 
+              <motion.tr
                 key={id}
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
+                initial={{ x: -8 }}
+                animate={{ x: 0 }}
                 transition={{ duration: 0.3, delay: 0.2 + (index * 0.05) }}
               >
                 <td className="cell-id">{id}</td>
@@ -48,12 +51,12 @@ export function VectorTable({ summary }: VectorTableProps) {
                 <td>
                   <div className="progress-cell">
                     <div className="progress-track">
-                      <motion.div 
-                        initial={{ width: 0 }}
-                        animate={{ width: `${p}%` }}
+                      <motion.div
+                        initial={{ scaleX: 0.001 }}
+                        animate={{ scaleX: 1 }}
                         transition={{ duration: 0.8, delay: 0.3 + (index * 0.1), ease: "easeOut" }}
-                        className="progress-fill" 
-                        style={{ backgroundColor: col }} 
+                        className="progress-fill"
+                        style={{ width: `${p}%`, transformOrigin: "left", backgroundColor: col }}
                       />
                     </div>
                     <span className="progress-text">{p}%</span>

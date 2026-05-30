@@ -7,12 +7,12 @@ interface EvidenceLogProps {
 }
 
 export function EvidenceLog({ summary }: EvidenceLogProps) {
-  if (summary.evidence_samples.length === 0) return null;
+  const samples = summary.evidence_samples ?? [];
 
   return (
-    <motion.div 
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
+    <motion.div
+      initial={{ y: 12 }}
+      animate={{ y: 0 }}
       transition={{ duration: 0.4, delay: 0.2 }}
       className="card"
     >
@@ -21,25 +21,31 @@ export function EvidenceLog({ summary }: EvidenceLogProps) {
         <span className="card-title">Breach Evidence Logs</span>
       </div>
       <div className="card-body" style={{ padding: '16px' }}>
-        {summary.evidence_samples.map((s, i) => (
-          <motion.div 
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, delay: 0.3 + (i * 0.1) }}
-            className="evidence-card" 
-            key={i}
-          >
-            <div className="evidence-header">
-              <span className="breach-badge">CRITICAL BREACH</span>
-              <span className="evidence-meta">
-                {s.attack_id} · Fields: {s.fields.join(", ") || "none"} · {s.turns_to_first_leak ?? "—"} turns
-              </span>
-            </div>
-            <div className="evidence-body">
-              <pre>{s.evidence_span}</pre>
-            </div>
-          </motion.div>
-        ))}
+        {samples.length === 0 ? (
+          <div className="empty-state" style={{ padding: '24px 0' }}>
+            No breaches captured — the target held the line on every call.
+          </div>
+        ) : (
+          samples.map((s, i) => (
+            <motion.div
+              initial={{ y: 8 }}
+              animate={{ y: 0 }}
+              transition={{ duration: 0.3, delay: 0.3 + (i * 0.1) }}
+              className="evidence-card"
+              key={`${s.attack_id}-${i}`}
+            >
+              <div className="evidence-header">
+                <span className="breach-badge">CRITICAL BREACH</span>
+                <span className="evidence-meta">
+                  {s.attack_id} · Fields: {(s.fields ?? []).join(", ") || "none"} · {s.turns_to_first_leak ?? "—"} turns
+                </span>
+              </div>
+              <div className="evidence-body">
+                <pre>{s.evidence_span}</pre>
+              </div>
+            </motion.div>
+          ))
+        )}
       </div>
     </motion.div>
   );

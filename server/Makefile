@@ -3,7 +3,7 @@
 UV ?= uv
 
 .PHONY: help install test lint fmt loopback campaign efficacy scorecard \
-        cekura-check build deploy clean
+        cekura-check dashboard build deploy clean
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -33,6 +33,13 @@ efficacy:  ## One honestly-labeled loopback efficacy artifact (results/)
 
 cekura-check:  ## Probe Cekura connectivity (loud status, not a silent no-op)
 	$(UV) run python -c "import cekura_integration as C; print(C.check_connection())"
+
+dashboard:  ## Run the OFFLINE control-plane API for the dashboard (then: cd ../frontend && npm run dev)
+	@echo "RedDial dashboard — OFFLINE only (loopback; no live dialing)."
+	@echo "API:      http://localhost:8080  (docs at /docs)"
+	@echo "Frontend: in another shell run  ->  cd ../frontend && npm run dev"
+	@echo "Starting uvicorn (Ctrl-C to stop)..."
+	$(UV) run uvicorn api:app --port 8080
 
 serve-attacker:  ## Run the attacker bot server (serves Twilio media at /ws). Needs NVIDIA+Gradium keys.
 	REDDIAL_ROLE=attacker $(UV) run python bot.py -t twilio --proxy $(or $(PUBLIC_HOST),localhost:7860)

@@ -40,6 +40,39 @@ export interface Summary {
   time_note?: string;
 }
 
+// Lightweight in-process metrics (Settings/Analytics header).
+export interface Metrics {
+  scans_run: number;
+  last_breach_rate: number;
+  last_run_id: string | null;
+}
+
+// Compact run-history row for the Analytics view (most recent first).
+export interface RunSummary {
+  run_id: string | null;
+  total_calls: number;
+  leak_rate: number;
+  breach_rate: number;
+  max_grade: string;
+  max_score: number;
+  failed_calls: number;
+}
+
+// One conversation turn in a captured loopback transcript.
+export interface TranscriptTurn {
+  role: string;
+  text: string;
+  state?: string;
+}
+
+// Representative breaching transcript for a run (attacker/target turns).
+export interface Transcript {
+  run_id: string | null;
+  attack_id: string;
+  breach: boolean;
+  transcript: TranscriptTurn[];
+}
+
 async function get<T>(path: string): Promise<T> {
   const r = await fetch(`${BASE}${path}`);
   if (!r.ok) throw new Error(`${path} → HTTP ${r.status}`);
@@ -50,6 +83,11 @@ export const api = {
   health: () => get<{ status: string; version: string }>("/healthz"),
   attacks: () => get<{ attacks: Attack[] }>("/attacks"),
   scorecardLatest: () => get<Summary>("/scorecard/latest"),
+  metrics: () => get<Metrics>("/metrics"),
+  scans: () => get<{ runs: RunSummary[] }>("/scans"),
+  // Representative breaching transcript: a specific run's, or the latest run's.
+  transcript: (runId?: string) =>
+    get<Transcript>(runId ? `/scans/${runId}/transcript` : "/transcript/latest"),
   runScan: async (n: number, concurrency = 1): Promise<{ run_id: string; summary: Summary }> => {
     const r = await fetch(`${BASE}/scans`, {
       method: "POST",

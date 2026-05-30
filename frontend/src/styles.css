@@ -3,9 +3,13 @@
 :root {
   /* Acid Glass Palette */
   --bg-color: #030305;
-  --glass-bg: rgba(255, 255, 255, 0.02);
-  --glass-border: rgba(255, 255, 255, 0.08);
-  --glass-highlight: rgba(255, 255, 255, 0.12);
+  /* Card surfaces lifted so panels visibly separate from the near-black bg
+     (was 0.02 — a 2% wash that made the whole main area look dim/"broken"). */
+  --glass-bg: rgba(255, 255, 255, 0.06);
+  --glass-border: rgba(255, 255, 255, 0.14);
+  --glass-highlight: rgba(255, 255, 255, 0.18);
+  --surface-raise: #14171f;
+  --text-tertiary: rgba(255, 255, 255, 0.55);
   
   --accent-acid: #ccff00;
   --accent-acid-dim: rgba(204, 255, 0, 0.15);
@@ -21,18 +25,56 @@
   --grade-f: #ff2a2a;
 
   --text-pure: #ffffff;
-  --text-muted: rgba(255, 255, 255, 0.7);
-  --text-faint: rgba(255, 255, 255, 0.4);
+  --text-muted: rgba(255, 255, 255, 0.84);
+  --text-faint: rgba(255, 255, 255, 0.58);
 
   --font-display: 'Bricolage Grotesque', sans-serif;
   --font-body: 'DM Sans', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
 }
 
-* { 
-  box-sizing: border-box; 
+* {
+  box-sizing: border-box;
   margin: 0;
   padding: 0;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   ALWAYS-VISIBLE SAFETY NET
+   Motion is an enhancement, never a gate on visibility. framer-motion entrance
+   tweens are rAF-driven and FREEZE mid-tween when the tab is backgrounded, the
+   device is slow, or reduced-motion is on — which previously left cards at
+   opacity ~0.25 and the banner at ~0.09 (content looked "broken"/invisible).
+
+   The resting state of every component is now fully opaque (no opacity:0 in any
+   `initial`). This rule is a belt-and-suspenders guarantee: even if a frozen
+   inline opacity is left behind, content stays readable. Hover/focus opacity
+   (links, etc.) is intentionally not forced here. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Hard floor: structural content containers are never invisible, regardless of
+   any animation state. These are the wrappers framer-motion drives on entrance. */
+.safety-banner,
+.card,
+.scorecard-hero,
+.metrics-grid,
+.metric-box,
+.chip,
+.chip-group,
+.data-table tr,
+.data-table td,
+.evidence-card,
+.progress-fill,
+.transcript-turn {
+  opacity: 1 !important;
 }
 
 html, body, #root { 
@@ -119,6 +161,17 @@ body::after {
   color: var(--text-faint);
   transition: all 0.2s;
   position: relative;
+  /* rail-item is now a real <button> — reset native chrome */
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+.rail-item:focus-visible {
+  outline: 2px solid var(--accent-acid);
+  outline-offset: -2px;
 }
 
 .rail-item:hover {
@@ -572,7 +625,7 @@ body::after {
 }
 
 .metric-box {
-  background: rgba(10, 10, 15, 0.8);
+  background: var(--surface-raise);
   padding: 24px;
   display: flex;
   flex-direction: column;
@@ -795,6 +848,336 @@ body::after {
   display: inline-flex;
   width: auto;
   padding: 16px 32px;
+}
+
+/* ── Bell / Notifications ── */
+.bell-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.bell-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--status-danger);
+  box-shadow: 0 0 8px var(--status-danger);
+}
+
+.bell-popover {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  width: 280px;
+  background: rgba(10, 10, 15, 0.95);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  backdrop-filter: blur(20px);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+  z-index: 50;
+  overflow: hidden;
+}
+
+.bell-popover-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--glass-border);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-faint);
+}
+
+.bell-popover-body {
+  padding: 16px;
+}
+
+.bell-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.bell-item-count {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--text-pure);
+}
+
+.bell-item.alert .bell-item-count {
+  color: var(--status-danger);
+}
+
+.bell-item-label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.bell-item-meta {
+  margin-top: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* ── Local avatar ── */
+.user-avatar svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ── Generic view empty state ── */
+.view-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--text-faint);
+}
+
+.view-empty svg {
+  color: var(--accent-acid);
+  opacity: 0.6;
+}
+
+.view-empty p {
+  font-size: 14px;
+  color: var(--text-muted);
+  max-width: 360px;
+  line-height: 1.6;
+}
+
+/* ── Table helpers (Analytics / Library views) ── */
+.mono-value {
+  font-family: var(--font-mono);
+  font-size: 16px;
+}
+
+.cell-template {
+  font-size: 14px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+/* ── Settings view ── */
+.settings-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.settings-row:first-child {
+  padding-top: 0;
+}
+
+.settings-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.settings-key {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.settings-key-icon {
+  display: flex;
+  color: var(--accent-acid);
+}
+
+.settings-val {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--text-pure);
+  word-break: break-all;
+  text-align: right;
+}
+
+.doc-links {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.doc-links a {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--accent-acid);
+  text-decoration: none;
+  transition: opacity 0.2s;
+}
+
+.doc-links a:hover {
+  opacity: 0.7;
+  text-decoration: underline;
+}
+
+/* ── Inline code (offline-API hint, etc.) ── */
+.inline-code {
+  display: block;
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent-acid);
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--glass-border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── Conversation / Transcript view ── */
+.transcript-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 24px;
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--glass-border);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.transcript-note svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--accent-acid);
+}
+
+.transcript-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.transcript-turn {
+  display: flex;
+  gap: 12px;
+  max-width: 88%;
+}
+
+.transcript-turn.attacker {
+  align-self: flex-start;
+  flex-direction: row;
+}
+
+.transcript-turn.target {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+
+.transcript-avatar {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--glass-border);
+}
+
+.transcript-turn.attacker .transcript-avatar {
+  background: rgba(255, 42, 42, 0.12);
+  color: var(--status-danger);
+  border-color: rgba(255, 42, 42, 0.3);
+}
+
+.transcript-turn.target .transcript-avatar {
+  background: var(--accent-acid-dim);
+  color: var(--accent-acid);
+  border-color: rgba(204, 255, 0, 0.3);
+}
+
+.transcript-bubble {
+  background: var(--surface-raise);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  padding: 12px 16px;
+}
+
+.transcript-turn.attacker .transcript-bubble {
+  border-top-left-radius: 2px;
+}
+
+.transcript-turn.target .transcript-bubble {
+  border-top-right-radius: 2px;
+}
+
+.transcript-turn.breach .transcript-bubble {
+  border-color: rgba(255, 42, 42, 0.5);
+  background: rgba(255, 42, 42, 0.08);
+  box-shadow: 0 0 0 1px rgba(255, 42, 42, 0.25), 0 0 24px rgba(255, 42, 42, 0.12);
+}
+
+.transcript-role {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+
+.transcript-state {
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 2px;
+  padding: 2px 6px;
+}
+
+.transcript-breach-tag {
+  font-weight: 800;
+  color: var(--bg-color);
+  background: var(--status-danger);
+  border-radius: 2px;
+  padding: 2px 6px;
+  letter-spacing: 0.1em;
+}
+
+.transcript-text {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-pure);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.transcript-turn.breach .transcript-text {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--accent-acid);
 }
 
 @media (max-width: 1100px) {

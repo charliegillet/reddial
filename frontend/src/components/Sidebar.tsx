@@ -1,4 +1,4 @@
-import { Activity, Terminal, AlertTriangle, Play } from "lucide-react";
+import { Activity, Terminal, AlertTriangle, Play, Database } from "lucide-react";
 import { type Attack } from "../api";
 
 interface SidebarProps {
@@ -38,8 +38,23 @@ export function Sidebar({ n, setN, runScan, running, health, err, attacks }: Sid
           {running ? <Activity size={16} className="animate-spin" /> : <Terminal size={16} />}
           {running ? "Executing Campaign..." : "Launch Campaign"}
         </button>
+
+        {health === "down" && (
+          <div className="error-msg" role="alert">
+            <AlertTriangle size={14} />
+            <span>
+              Control-plane API offline. Start it, then reload:
+              <code className="inline-code">cd server &amp;&amp; uv run uvicorn api:app --port 8080</code>
+            </span>
+          </div>
+        )}
+
+        {health === "?" && !running && (
+          <p className="helper-text">Connecting to control-plane…</p>
+        )}
+
         {err && (
-          <div className="error-msg">
+          <div className="error-msg" role="alert">
             <AlertTriangle size={14} /> {err}
           </div>
         )}
@@ -65,15 +80,5 @@ export function Sidebar({ n, setN, runScan, running, health, err, attacks }: Sid
         </div>
       </div>
     </aside>
-  );
-}
-
-function Database(props: any) {
-  return (
-    <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <ellipse cx="12" cy="5" rx="9" ry="3" />
-      <path d="M3 5V19A9 3 0 0 0 21 19V5" />
-      <path d="M3 12A9 3 0 0 0 21 12" />
-    </svg>
   );
 }

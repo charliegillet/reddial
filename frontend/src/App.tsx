@@ -1,21 +1,42 @@
-import { useEffect, useState } from "react";
-import { ShieldAlert, LayoutDashboard, Shield, BarChart3, Settings, Users, Bell, Activity } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { MotionConfig } from "framer-motion";
+import {
+  Shield,
+  LayoutDashboard,
+  BarChart3,
+  Library as LibraryIcon,
+  Settings as SettingsIcon,
+  MessagesSquare,
+  Bell,
+} from "lucide-react";
 import { api, type Attack, type Summary } from "./api";
 import { Sidebar } from "./components/Sidebar";
-import { ScorecardSummary } from "./components/ScorecardSummary";
-import { VectorTable } from "./components/VectorTable";
-import { EvidenceLog } from "./components/EvidenceLog";
-import { ScanningScreen } from "./components/ScanningScreen";
-import { motion, AnimatePresence } from "framer-motion";
+import { DashboardView } from "./views/DashboardView";
+import { AnalyticsView } from "./views/AnalyticsView";
+import { LibraryView } from "./views/LibraryView";
+import { SettingsView } from "./views/SettingsView";
+import { ConversationView } from "./views/ConversationView";
 import "./styles.css";
 
 const GRADE_VAR: Record<string, string> = {
-  A: "var(--grade-a)", 
-  B: "var(--grade-b)", 
-  C: "var(--grade-c)", 
-  D: "var(--grade-d)", 
+  A: "var(--grade-a)",
+  B: "var(--grade-b)",
+  C: "var(--grade-c)",
+  D: "var(--grade-d)",
   F: "var(--grade-f)",
 };
+
+const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? "/api";
+
+type ViewId = "dashboard" | "conversation" | "analytics" | "library" | "settings";
+
+const NAV: { id: ViewId; label: string; icon: typeof LayoutDashboard }[] = [
+  { id: "dashboard", label: "Threat Console", icon: LayoutDashboard },
+  { id: "conversation", label: "Conversation", icon: MessagesSquare },
+  { id: "analytics", label: "Analytics", icon: BarChart3 },
+  { id: "library", label: "Attack Library", icon: LibraryIcon },
+  { id: "settings", label: "Settings", icon: SettingsIcon },
+];
 
 export function App() {
   const [health, setHealth] = useState<"up" | "down" | "?">("?");
@@ -25,6 +46,9 @@ export function App() {
   const [n, setN] = useState(36);
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [activeView, setActiveView] = useState<ViewId>("dashboard");
+  const [bellOpen, setBellOpen] = useState(false);
+  const bellRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     api.health().then((h) => { setHealth("up"); setVersion(h.version); }).catch(() => setHealth("down"));
@@ -32,8 +56,17 @@ export function App() {
     api.scorecardLatest().then(setSummary).catch(() => {});
   }, []);
 
+  useEffect(() => {
+    if (!bellOpen) return;
+    function onClick(e: MouseEvent) {
+      if (bellRef.current && !bellRef.current.contains(e.target as Node)) setBellOpen(false);
+    }
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [bellOpen]);
+
   async function runScan() {
-    setRunning(true); 
+    setRunning(true);
     setErr(null);
     try {
       const { summary } = await api.runScan(n, 4);
@@ -46,8 +79,14 @@ export function App() {
   }
 
   const gradeColor = GRADE_VAR[summary?.max_grade ?? ""] ?? "var(--text-tertiary)";
+  const activeLabel = NAV.find((v) => v.id === activeView)?.label ?? "Threat Console";
+
+  const breachCount = summary
+    ? Math.round((summary.breach_rate ?? 0) * (summary.total_calls ?? 0))
+    : 0;
 
   return (
+    <MotionConfig reducedMotion="user">
     <div className="app-container">
       {/* ── Global Nav Rail ── */}
       <nav className="nav-rail">
@@ -55,12 +94,31 @@ export function App() {
           <div className="brand-orb"><Shield size={18} strokeWidth={2.5} /></div>
         </div>
         <div className="rail-links">
-          <a href="#" className="rail-item active"><LayoutDashboard size={20} /></a>
-          <a href="#" className="rail-item"><BarChart3 size={20} /></a>
-          <a href="#" className="rail-item"><Users size={20} /></a>
+          {NAV.filter((v) => v.id !== "settings").map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              className={`rail-item ${activeView === id ? "active" : ""}`}
+              aria-label={label}
+              aria-current={activeView === id ? "page" : undefined}
+              title={label}
+              onClick={() => setActiveView(id)}
+            >
+              <Icon size={20} />
+            </button>
+          ))}
         </div>
         <div className="rail-bottom">
-          <a href="#" className="rail-item"><Settings size={20} /></a>
+          <button
+            type="button"
+            className={`rail-item ${activeView === "settings" ? "active" : ""}`}
+            aria-label="Settings"
+            aria-current={activeView === "settings" ? "page" : undefined}
+            title="Settings"
+            onClick={() => setActiveView("settings")}
+          >
+            <SettingsIcon size={20} />
+          </button>
         </div>
       </nav>
 
@@ -68,86 +126,103 @@ export function App() {
         {/* ── Header ── */}
         <header className="topbar">
           <div className="topbar-left">
-            <h1>Workspace / <span>Threat Console</span></h1>
+            <h1>Workspace / <span>{activeLabel}</span></h1>
           </div>
           <div className="topbar-right">
             <div className="health-status">
               <span className={`health-indicator ${health === "up" ? "up" : health === "down" ? "down" : ""}`} />
               {health === "up" ? `API Online · v${version}` : health === "down" ? "API Offline" : "Connecting..."}
             </div>
-            <button className="icon-btn"><Bell size={18} /></button>
-            <div className="user-avatar">
-              <img src="https://api.dicebear.com/7.x/notionists/svg?seed=Felix" alt="User" />
+
+            <div className="bell-wrap" ref={bellRef}>
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label="Notifications"
+                aria-haspopup="true"
+                aria-expanded={bellOpen}
+                onClick={() => setBellOpen((o) => !o)}
+              >
+                <Bell size={18} />
+                {breachCount > 0 && <span className="bell-dot" aria-hidden="true" />}
+              </button>
+              {bellOpen && (
+                <div className="bell-popover" role="dialog" aria-label="Notifications">
+                  <div className="bell-popover-header">Latest Run</div>
+                  {summary ? (
+                    <div className="bell-popover-body">
+                      <div className={`bell-item ${breachCount > 0 ? "alert" : ""}`}>
+                        <span className="bell-item-count">{breachCount}</span>
+                        <span className="bell-item-label">
+                          {breachCount === 1 ? "breach" : "breaches"} across {summary.total_calls} calls
+                        </span>
+                      </div>
+                      {summary.run_id && (
+                        <div className="bell-item-meta">run {summary.run_id}</div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="bell-popover-body">
+                      <div className="bell-item-meta">No runs yet.</div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="user-avatar" aria-label="User" title="Operator">
+              <svg viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Operator avatar">
+                <rect width="32" height="32" rx="16" fill="var(--accent-acid-dim)" />
+                <text
+                  x="16"
+                  y="21"
+                  textAnchor="middle"
+                  fontFamily="var(--font-display)"
+                  fontSize="13"
+                  fontWeight="700"
+                  fill="var(--accent-acid)"
+                >
+                  OP
+                </text>
+              </svg>
             </div>
           </div>
         </header>
 
         {/* ── Main Layout ── */}
         <div className="main-layout">
-          <Sidebar 
-            n={n} 
-            setN={setN} 
-            runScan={runScan} 
-            running={running} 
-            health={health} 
-            err={err} 
-            attacks={attacks} 
+          <Sidebar
+            n={n}
+            setN={setN}
+            runScan={runScan}
+            running={running}
+            health={health}
+            err={err}
+            attacks={attacks}
           />
 
-          {/* ── Main Dashboard ── */}
+          {/* ── Main Content (view router) ── */}
           <main className="dashboard-content">
             <div className="content-wrapper">
-              
-              <motion.div 
-                initial={{ opacity: 0, y: -10 }} 
-                animate={{ opacity: 1, y: 0 }} 
-                className="safety-banner"
-              >
-                <div className="banner-icon"><ShieldAlert size={20} /></div>
-                <div className="banner-text">
-                  <p><strong>SYNTHETIC DATA HARNESS</strong></p>
-                  <p>All operations utilize fake PII (Stripe test BINs, specimen SSNs). Runs offline loopback against mock endpoints. No live dialing or real-world PII exposure from this console.</p>
-                </div>
-              </motion.div>
-
-              <AnimatePresence mode="wait">
-                {running ? (
-                  <ScanningScreen key="scanning" />
-                ) : !summary ? (
-                  <motion.div 
-                    key="empty"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    className="card empty-onboarding"
-                  >
-                    <div className="empty-state">
-                      <div className="empty-icon-wrap">
-                        <Activity size={32} />
-                      </div>
-                      <h3>Ready for your first campaign</h3>
-                      <p>Run a deterministic attacker FSM against your mock voice agent to generate a vulnerability scorecard. No configuration required.</p>
-                      <button className="primary-button inline-btn" onClick={runScan}>
-                        Launch Campaign Now
-                      </button>
-                    </div>
-                  </motion.div>
-                ) : (
-                  <motion.div 
-                    key="results"
-                    style={{ display: "flex", flexDirection: "column", gap: "24px" }}
-                  >
-                    <ScorecardSummary summary={summary} gradeColor={gradeColor} />
-                    <VectorTable summary={summary} />
-                    <EvidenceLog summary={summary} />
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
+              {activeView === "dashboard" && (
+                <DashboardView
+                  summary={summary}
+                  running={running}
+                  gradeColor={gradeColor}
+                  runScan={runScan}
+                />
+              )}
+              {activeView === "conversation" && <ConversationView summary={summary} />}
+              {activeView === "analytics" && <AnalyticsView />}
+              {activeView === "library" && <LibraryView attacks={attacks} />}
+              {activeView === "settings" && (
+                <SettingsView apiBase={API_BASE} version={version} health={health} />
+              )}
             </div>
           </main>
         </div>
       </div>
     </div>
+    </MotionConfig>
   );
 }

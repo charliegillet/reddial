@@ -3,9 +3,8 @@ import { Activity } from "lucide-react";
 
 export function ScanningScreen() {
   return (
-    <motion.div 
-      key="scanning"
-      initial={{ opacity: 0 }}
+    <motion.div
+      initial={{ opacity: 1 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       className="card"
@@ -33,9 +32,9 @@ export function ScanningScreen() {
         }}
       />
       
-      <motion.div 
-        initial={{ scale: 0.9, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
+      <motion.div
+        initial={{ scale: 0.95 }}
+        animate={{ scale: 1 }}
         transition={{ delay: 0.2 }}
         style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '24px', color: 'var(--accent-acid)' }}
       >

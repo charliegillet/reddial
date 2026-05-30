@@ -10,11 +10,14 @@ interface ScorecardSummaryProps {
 
 export function ScorecardSummary({ summary, gradeColor }: ScorecardSummaryProps) {
   const grade = summary.max_grade ?? "—";
+  const breachRate = summary.breach_rate ?? 0;
+  const leakRate = summary.leak_rate ?? 0;
+  const fieldsLeaked = summary.distinct_fields_leaked ?? [];
   
   return (
-    <motion.div 
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
+    <motion.div
+      initial={{ y: 12 }}
+      animate={{ y: 0 }}
       transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
       className="card"
     >
@@ -24,11 +27,11 @@ export function ScorecardSummary({ summary, gradeColor }: ScorecardSummaryProps)
       </div>
       <div className="card-body">
         <div className="scorecard-hero">
-          <motion.div 
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
+          <motion.div
+            initial={{ scale: 0.92 }}
+            animate={{ scale: 1 }}
             transition={{ delay: 0.3, duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
-            className="grade-display" 
+            className="grade-display"
             style={{ color: gradeColor }}
           >
             <div className="grade-value">{grade}</div>
@@ -38,19 +41,19 @@ export function ScorecardSummary({ summary, gradeColor }: ScorecardSummaryProps)
           <div className="metrics-grid">
             <div className="metric-box">
               <div className="metric-value" style={{ color: gradeColor }}>
-                <AnimatedCounter value={summary.max_score} />
+                <AnimatedCounter value={summary.max_score ?? 0} />
               </div>
               <div className="metric-label">Vuln Score</div>
             </div>
             <div className="metric-box">
-              <div className={`metric-value ${summary.breach_rate > 0 ? "danger" : ""}`}>
-                <AnimatedCounter value={summary.breach_rate * 100} suffix="%" />
+              <div className={`metric-value ${breachRate > 0 ? "danger" : ""}`}>
+                <AnimatedCounter value={breachRate * 100} suffix="%" />
               </div>
               <div className="metric-label">Breach Rate</div>
             </div>
             <div className="metric-box">
               <div className="metric-value">
-                <AnimatedCounter value={summary.leak_rate * 100} suffix="%" />
+                <AnimatedCounter value={leakRate * 100} suffix="%" />
               </div>
               <div className="metric-label">Leak Rate</div>
             </div>
@@ -66,42 +69,42 @@ export function ScorecardSummary({ summary, gradeColor }: ScorecardSummaryProps)
         </div>
         
         <div className="chip-group">
-          <motion.span 
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
+          <motion.span
+            initial={{ scale: 0.94 }}
+            animate={{ scale: 1 }}
             transition={{ delay: 0.5 }}
             className="chip"
           >
-            {summary.total_calls} calls total
+            {summary.total_calls ?? 0} calls total
           </motion.span>
-          
+
           {(summary.failed_calls ?? 0) > 0 && (
-            <motion.span 
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
+            <motion.span
+              initial={{ scale: 0.94 }}
+              animate={{ scale: 1 }}
               transition={{ delay: 0.6 }}
               className="chip alert"
             >
               {summary.failed_calls} calls failed
             </motion.span>
           )}
-          
-          {summary.distinct_fields_leaked.map((f, i) => (
-            <motion.span 
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
+
+          {fieldsLeaked.map((f, i) => (
+            <motion.span
+              initial={{ scale: 0.94 }}
+              animate={{ scale: 1 }}
               transition={{ delay: 0.7 + (i * 0.1) }}
-              className={`chip ${f === "card" ? "alert" : ""}`} 
+              className={`chip ${f === "card" ? "alert" : ""}`}
               key={f}
             >
               leaked: {f}
             </motion.span>
           ))}
-          
+
           {summary.time_note && (
-            <motion.span 
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
+            <motion.span
+              initial={{ scale: 0.94 }}
+              animate={{ scale: 1 }}
               transition={{ delay: 0.9 }}
               className="chip"
             >
