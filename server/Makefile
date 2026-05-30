@@ -34,6 +34,9 @@ efficacy:  ## One honestly-labeled loopback efficacy artifact (results/)
 cekura-check:  ## Probe Cekura connectivity (loud status, not a silent no-op)
 	$(UV) run python -c "import cekura_integration as C; print(C.check_connection())"
 
+live-llm:  ## Run ONE live attack: real Nemotron attacker <-> real target <-> real classifier (text; needs NEMOTRON_LLM_URL)
+	$(UV) run python live_attack.py
+
 cekura-sync:  ## Push the persona pack + one loopback run to Cekura (needs CEKURA_* in .env)
 	$(UV) run python -c "from dotenv import load_dotenv; load_dotenv('.env'); \
 import cekura_integration as C, attack_library as A, loopback; \
