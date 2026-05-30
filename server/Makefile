@@ -1,0 +1,45 @@
+# RedDial — common dev/ops tasks. Run from server/.
+.DEFAULT_GOAL := help
+UV ?= uv
+
+.PHONY: help install test lint fmt loopback campaign efficacy scorecard \
+        cekura-check build deploy clean
+
+help:  ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+	  awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
+
+install:  ## Sync deps from the lockfile (incl. dev)
+	$(UV) sync --locked
+
+test:  ## Run the curated test suite
+	$(UV) run pytest tests/ -q
+
+lint:  ## Ruff lint (matches CI)
+	$(UV) run ruff check .
+
+fmt:  ## Auto-fix lint
+	$(UV) run ruff check --fix .
+
+loopback:  ## One deterministic loopback breach (no keys)
+	$(UV) run python -c "import loopback; r=loopback.run_loopback(); \
+	print('BREACH' if r.breach else 'no breach','| grade',r.grade,'| turns',r.turns_to_first_leak)"
+
+campaign:  ## Offline campaign -> scorecard.{json,html} (N=36, override: make campaign N=200)
+	$(UV) run python campaign_runner.py --n $(or $(N),36) --persist
+
+efficacy:  ## One honestly-labeled loopback efficacy artifact (results/)
+	$(UV) run python efficacy_run.py --mode loopback
+
+cekura-check:  ## Probe Cekura connectivity (loud status, not a silent no-op)
+	$(UV) run python -c "import cekura_integration as C; print(C.check_connection())"
+
+build:  ## Build the deploy image (override TAG / ROLE)
+	docker build -t reddial:$(or $(TAG),dev) --build-arg PIPECAT_BASE=$(or $(BASE),dailyco/pipecat-base:0.0.8) .
+
+deploy:  ## Deploy to Pipecat Cloud (requires `pcc` auth + pcc-deploy.toml)
+	pcc deploy
+
+clean:  ## Remove generated artifacts
+	rm -f scorecard.json scorecard.html
+	rm -rf results transcripts/*/ __pycache__ tests/__pycache__

@@ -1,4 +1,14 @@
-FROM dailyco/pipecat-base:latest
+# Pin the base image (audit: `latest` is non-reproducible). Override at build
+# with --build-arg PIPECAT_BASE=dailyco/pipecat-base:<tag>. Pin to a digest in
+# prod (dailyco/pipecat-base@sha256:...) for full reproducibility.
+ARG PIPECAT_BASE=dailyco/pipecat-base:0.0.8
+FROM ${PIPECAT_BASE}
+
+# Default deploy role: the deliberately-vulnerable target. Override per deploy
+# (target | attacker | flower). See bot.py dispatcher.
+ENV REDDIAL_ROLE=target
+# Outbound dialing is OFF unless explicitly enabled at deploy time (safety gate).
+ENV REDDIAL_DIALING_ENABLED=
 
 # Enable bytecode compilation
 ENV UV_COMPILE_BYTECODE=1

@@ -39,7 +39,7 @@ def test_campaign_survives_a_throwing_call(monkeypatch):
                "seconds_to_first_leak": 18.0, "turns_to_first_leak": 2,
                "evidence_span": "4539148803436467"}
 
-    def flaky_run_one(attack, mode="loopback", seconds_per_turn=None):
+    def flaky_run_one(attack, mode="loopback", seconds_per_turn=None, **kwargs):
         calls["n"] += 1
         if calls["n"] == 2:
             raise RuntimeError("simulated transient model error")
