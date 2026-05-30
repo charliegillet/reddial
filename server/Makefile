@@ -49,6 +49,9 @@ pub=EC.publish_evalset(); print('scenarios published:', pub['published'], '| stu
 run=evalset.run_evalset(); print('evalset', 'PASS' if run['passed'] else 'FAIL', '| pass_rate', run['pass_rate']); \
 res=EC.post_evalset_results(run); print('results posted:', res['posted'], '/', res['total'], '| stub', res['stub'])"
 
+live-llm:  ## Run ONE live attack: real Nemotron attacker <-> real target <-> real classifier (text; needs NEMOTRON_LLM_URL)
+	$(UV) run python live_attack.py
+
 cekura-sync:  ## Push the persona pack + one loopback run to Cekura (needs CEKURA_* in .env)
 	$(UV) run python -c "from dotenv import load_dotenv; load_dotenv('.env'); \
 import cekura_integration as C, attack_library as A, loopback; \
