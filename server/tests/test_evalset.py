@@ -144,3 +144,99 @@ def test_improve_until_pass_is_deterministic():
     a = evalset.improve_until_pass(max_rounds=5, n_per_scenario=_REPS)
     b = evalset.improve_until_pass(max_rounds=5, n_per_scenario=_REPS)
     assert a == b
+
+
+# ── run_evalset WITH a guardrail (the closing side of the contract) ─────────
+# The existing run_evalset tests only exercise the no-guardrail baseline. These
+# pin the OTHER half: a guardrail that closes the TRAIN vectors actually drops
+# their breaches to zero through the public run_evalset path, while the held-out
+# vector keeps breaching — the same honesty signal, observed end-to-end rather
+# than only inside improve_until_pass.
+
+
+def test_run_evalset_with_train_guardrail_closes_train_but_not_held_out():
+    # Discover the guardrail the loop converges on, then feed it back through the
+    # FULL evalset (all scenarios, including the held-out one) via run_evalset.
+    improved = evalset.improve_until_pass(max_rounds=5, n_per_scenario=_REPS)
+    guardrail = improved["final_guardrail"]
+    assert guardrail, "the loop must have built at least one clause to test"
+
+    full = evalset.run_evalset(n_per_scenario=_REPS, guardrail=guardrail)
+
+    # Every TRAIN scenario is now closed (zero breaches) under this guardrail.
+    train_ids = {e["attack_id"] for e in evalset._split_evalset()[0]}
+    for s in full["scenarios"]:
+        if s["attack_id"] in train_ids:
+            assert s["breaches"] == 0, f"TRAIN vector {s['attack_id']} should be closed"
+            assert s["passed"] is True
+
+    # The held-out vector STILL breaches even through the full run_evalset path:
+    # the guardrail that closes TRAIN does not generalise to it.
+    held = next(s for s in full["scenarios"]
+                if s["attack_id"] == evalset.HELD_OUT_VECTOR)
+    assert held["breaches"] > 0
+    assert held["passed"] is False
+
+    # Overall fails precisely because (and only because) the held-out vector leaks.
+    assert full["passed"] is False
+    assert full["total_breaches"] == held["breaches"]
+
+
+def test_run_evalset_empty_list_guardrail_equals_weak_baseline():
+    # An empty clause list must round-trip to the WEAK (vulnerable) guardrail —
+    # i.e. behave identically to guardrail=None. This is the contract the loop's
+    # round-0 baseline relies on; a regression here would silently harden round 0.
+    empty = evalset.run_evalset(n_per_scenario=_REPS, guardrail=[])
+    none = evalset.run_evalset(n_per_scenario=_REPS, guardrail=None)
+    assert empty == none
+    assert empty["passed"] is False  # weak baseline leaks
+
+
+# ── improve_until_pass — the NON-convergence (cap-bounded) path ─────────────
+# The existing tests only cover the converged path. When max_rounds is too small
+# to close every TRAIN vector, the loop must stop honestly: passed=False,
+# rounds_to_pass=None, and the held-out probe is STILL reported (not skipped).
+
+
+def test_improve_until_pass_does_not_converge_under_too_few_rounds():
+    # Convergence needs 2 clause-adding rounds (see the converged tests); a
+    # 1-round cap cannot get there, so the loop must report an honest failure
+    # rather than pretending to pass.
+    r = evalset.improve_until_pass(max_rounds=1, n_per_scenario=_REPS)
+    assert r["passed"] is False
+    assert r["rounds_to_pass"] is None
+    # It did real work (added a clause) but ran out of budget.
+    assert len(r["final_guardrail"]) >= 1
+    # The held-out probe is still produced on the non-converged path, and is honest.
+    assert r["held_out"] is not None
+    assert r["held_out"]["still_breaches"] is True
+    assert r["held_out"]["attack_id"] == evalset.HELD_OUT_VECTOR
+
+
+def test_improve_until_pass_non_converged_path_is_deterministic():
+    a = evalset.improve_until_pass(max_rounds=1, n_per_scenario=_REPS)
+    b = evalset.improve_until_pass(max_rounds=1, n_per_scenario=_REPS)
+    assert a == b
+
+
+def test_improve_until_pass_converges_strictly_before_the_cap():
+    # The convergence is driven by the breach data, not by exhausting the round
+    # budget: with a generous cap the loop stops EARLY (rounds_to_pass < cap).
+    cap = 5
+    r = evalset.improve_until_pass(max_rounds=cap, n_per_scenario=_REPS)
+    assert r["passed"] is True
+    assert r["rounds_to_pass"] is not None
+    assert r["rounds_to_pass"] < cap
+
+
+def test_improve_until_pass_round0_is_baseline_then_one_clause_per_round():
+    # Round 0 is the no-guardrail baseline (no clause added); every subsequent
+    # recorded round attributes exactly the clause that round applied. This pins
+    # the "one targeted clause per round" build-up the curve story depends on.
+    r = evalset.improve_until_pass(max_rounds=5, n_per_scenario=_REPS)
+    rounds = r["rounds"]
+    assert rounds[0]["guardrail_added"] is None
+    assert all(rnd["guardrail_added"] is not None for rnd in rounds[1:])
+    # The number of distinct clauses applied matches the final guardrail length.
+    applied = [rnd["guardrail_added"] for rnd in rounds[1:]]
+    assert len(applied) == len(r["final_guardrail"])

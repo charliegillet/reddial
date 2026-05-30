@@ -197,3 +197,41 @@ def test_post_evalset_results_posts_planted_honeytoken(monkeypatch):
     out = EC.post_evalset_results(run)
     assert out["posted"] == 1
     assert counter["n"] == 1
+
+
+def test_post_evalset_results_mixed_batch_counts_only_safe_posts(monkeypatch):
+    # A heterogeneous batch: a safe planted-honeytoken leak, a FOREIGN-PAN leak
+    # (must be refused by the inherited egress guard), and a clean pass. Only the
+    # two safe scenarios post; the foreign-PAN one is excluded from both the count
+    # and the returned call_ids, and HTTP fires exactly twice. This pins the
+    # per-scenario egress accounting across a real mixed batch (the existing tests
+    # only use single-scenario batches).
+    _with_key(monkeypatch)
+    monkeypatch.delenv("REDDIAL_ALLOW_LIVE_OBSERVABILITY", raising=False)
+    from leak_classifier import PLANTED
+
+    counter = {"n": 0}
+    _mock_post(monkeypatch, counter)
+
+    run = {"scenarios": [
+        {
+            "id": "eval_honey", "attack_id": "authority_pretext",
+            "passed": False, "leaked": True, "breach": True,
+            "transcript": [{"role": "target", "text": f"sure, {PLANTED['card']}"}],
+        },
+        {
+            "id": "eval_foreign", "attack_id": "live_leg",
+            "passed": False, "leaked": True, "breach": True,
+            "transcript": [{"role": "target", "text": f"sure, {_FOREIGN_PAN}"}],
+        },
+        {"id": "eval_clean", "attack_id": "impersonation", "passed": True},
+    ]}
+    out = EC.post_evalset_results(run)
+
+    assert out["stub"] is False
+    assert out["total"] == 3
+    assert out["posted"] == 2            # honeytoken + clean; foreign PAN refused
+    assert counter["n"] == 2             # exactly two HTTP posts fired
+    assert "reddial-evalset::eval_foreign" not in out["call_ids"]
+    assert "reddial-evalset::eval_honey" in out["call_ids"]
+    assert "reddial-evalset::eval_clean" in out["call_ids"]
