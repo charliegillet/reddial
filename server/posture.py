@@ -21,7 +21,11 @@ Pure stdlib; the LLM is injected so this stays unit-testable with a stub.
 
 from __future__ import annotations
 
+import logging
+import os
 import re
+
+logger = logging.getLogger("reddial.posture")
 
 LABELS = ("compliant", "deflecting", "refusing", "confused", "verifying_identity")
 
@@ -34,13 +38,17 @@ _REFUSING = (
     "won't be able", "do not provide", "don't provide", "cannot provide",
     "won't provide", "not provide", "over the phone", "we do not", "we don't",
     "for security reasons", "i'm not able", "i am not able", "not something i can",
+    "rather not", "i'd rather not", "prefer not", "i'm not going to", "not going to give",
+    "can only share the last", "only share the last", "only the last four",
 )
 _VERIFYING = (
     "verify", "verification", "who is this", "who am i speaking", "who i am speaking",
     "speaking with", "confirm your", "your identity", "may i ask who", "may i have your",
     "may i take your", "take your name", "your name", "what's your name", "your full name",
     "what is this regarding", "account holder", "last four of your", "date of birth to",
-    "can i get your", "could i get your",
+    "can i get your", "could i get your", "reason for the request", "reason for your",
+    "what is the reason", "why do you need", "what's the reason", "need to confirm a couple",
+    "confirm a few details", "before i can do that", "before i can share",
 )
 _COMPLIANT = (
     "sure", "okay", "the number is", "it's ", "the card", "reading it back",
@@ -122,3 +130,49 @@ def classify(text: str, llm=None) -> str:
         except Exception:
             pass  # fall through to deterministic keywords
     return keyword_posture(text)
+
+
+class NemotronClassifier:
+    """The REAL model-based posture classifier — an OpenAI-compatible adapter for
+    the NVIDIA Nemotron NIM endpoint, exposing the ``.classify(text)`` contract.
+
+    This is what makes the LLM autonomy path reachable from a live run (the
+    keyword path is only a deterministic fallback). The OpenAI client is injectable
+    for unit tests; ``from_env()`` returns None when NEMOTRON_LLM_URL is unset so
+    callers can cleanly fall back to deterministic keywords.
+    """
+
+    def __init__(self, client=None, model: str | None = None,
+                 base_url: str | None = None, api_key: str | None = None):
+        self._client = client
+        self._model = model or os.environ.get("NEMOTRON_LLM_MODEL", "nvidia/nemotron-3-super")
+        self._base_url = base_url or os.environ.get("NEMOTRON_LLM_URL", "")
+        self._api_key = api_key or os.environ.get("NEMOTRON_LLM_API_KEY", "EMPTY")
+
+    @classmethod
+    def from_env(cls) -> NemotronClassifier | None:
+        """Build from env, or None if no Nemotron endpoint is configured."""
+        if not os.environ.get("NEMOTRON_LLM_URL"):
+            return None
+        return cls()
+
+    def _ensure_client(self):
+        if self._client is None:
+            from openai import OpenAI  # pipecat-ai[openai] provides this
+            self._client = OpenAI(base_url=self._base_url, api_key=self._api_key)
+        return self._client
+
+    def classify(self, text: str) -> str:
+        """Return a posture label via Nemotron (temp 0). Falls back to keywords on error."""
+        try:
+            resp = self._ensure_client().chat.completions.create(
+                model=self._model,
+                temperature=0,
+                max_tokens=8,
+                messages=[{"role": "user", "content": build_prompt(text)}],
+            )
+            raw = resp.choices[0].message.content
+            return parse_label(raw) or keyword_posture(text)
+        except Exception as e:  # noqa: BLE001 — never let classification break the call
+            logger.warning("Nemotron posture classify failed (%s) — keyword fallback", e)
+            return keyword_posture(text)

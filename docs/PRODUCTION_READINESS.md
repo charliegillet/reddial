@@ -96,23 +96,35 @@ marked **[converged]** (high confidence).
 
 ---
 
-## Path to production (prioritized)
+## Path to production (status as of the phase work)
 
-**Phase 0 — make the offline harness shippable as an internal tool (days):** declare deps + lock;
-fix the two latent crashes + add campaign per-call isolation; make the suite CI-runnable + add a GitHub
-Actions workflow with a coverage floor; import-smoke + no-op contract tests for the voice/integration layer.
+**Phase 0 — make the offline harness shippable — ✅ DONE.** Deps declared + locked (incl.
+`twilio`, `pytest`); two latent crashes guarded; campaign per-call + loopback per-turn isolation;
+GitHub Actions CI (`uv sync --locked` + ruff + `pytest tests/`); import-smoke + no-op contract tests.
 
-**Phase 1 — make it safe to place one real call (1–2 weeks):** fail-closed allowlist + consent record +
-rate limit + call cap + kill-switch (default off); fix the deploy entrypoint; register `/attacker-ws`; add
-`twilio` dep; replace LAN-IP defaults with required config; a real Cekura connectivity check.
+**Phase 1 — safe to place one real call — ✅ DONE (code) / ⚠️ one untested route.** `safety_controls.py`
+fail-closed gate (kill-switch off by default, E.164 allowlist, per-call consent, `CallGuard` cap + rate
+limit), wired + tested; deploy entrypoint fixed (`bot.py` role dispatcher); `twilio` dep added; LAN-IP
+defaults replaced with required config; Cekura endpoint corrected + loud `check_connection()`.
+**Still open:** `/attacker-ws` route registration — code TODO, can't be verified without a live call.
 
-**Phase 2 — prove real-world efficacy (weeks):** one recorded end-to-end run calling an agent the team did
-**not** author (or a faithful real-audio loopback through real STT/TTS), where the classifier catches a leak
-*through real transcription garble*. Replace keyword posture with a model-based classifier. Only then are the
-scorecard numbers evidence.
+**Phase 2 — real autonomy ✅ / real-world efficacy ⛔ NOT YET (requires an operator live run).**
+Model-based posture classifier (`posture.py`) + hardened keyword fallback replaces the brittle matcher;
+`efficacy_run.py` is the single-run harness. **Loopback efficacy is stamped
+`proves_real_world_efficacy = false`** — attacking our own mock is NOT evidence. Closing this blocker
+requires `efficacy_run.py --mode live` against a **consented, non-self agent** (keys + the safety gate),
+with the captured transcript attached — see [`DEPLOY.md`](DEPLOY.md). **Not done in this repo; not claimed.**
 
-**Phase 3 — scale & operate (weeks):** real concurrency for campaigns, retries/persistence, structured logging
-+ call-correlation IDs, cost controls, IaC/secrets management, versioned deploys + rollback.
+**Phase 3 — scale & operate — ✅ MOSTLY DONE.** Bounded concurrency (thread pool), per-call retries with
+backoff, per-call transcript persistence, run/call correlation IDs + structured logging (`run_context.py`),
+campaign `--budget` cost cap, pinned Docker base, Makefile, [`DEPLOY.md`](DEPLOY.md). **Still open:**
+IaC/secrets management and versioned-deploy/rollback automation.
+
+> **Bottom line:** offline harness is shippable as an internal tool; the live voice product is now
+> *safe to attempt* and *operable*, but its core claim — working against a real third-party agent —
+> **remains unproven** until an operator records one live run. Status moved from "demo/prototype" toward
+> "alpha that's safe to pilot," **not** "production-ready."
 
 *Detailed per-dimension findings: [code-quality](audit/code-quality.md) · [security](audit/security.md) ·
-[testing](audit/testing.md) · [ops](audit/ops.md) · [devils-advocate](audit/devils-advocate.md).*
+[testing](audit/testing.md) · [ops](audit/ops.md) · [devils-advocate](audit/devils-advocate.md) ·
+[fix-review](audit/fix-review.md) · [phases-review](audit/phases-review.md).*

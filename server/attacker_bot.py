@@ -74,6 +74,41 @@ def _public_host() -> str:
     return os.environ.get("PUBLIC_HOST", "example.invalid")
 
 
+def _emit_live_artifact(transcript: list[dict], breached: bool, turns: int) -> str | None:
+    """Write a live efficacy artifact (transcript + verdict) when a real call ends.
+
+    Closes the capture loop: a live run produces the same JSON shape as
+    efficacy_run.py, with the breach verdict from the connected-leg classifier and
+    target_kind='real-agent' (so it CAN constitute real-world evidence — unlike
+    loopback). Best-effort; never raises into the pipeline.
+    """
+    try:
+        import json
+        from pathlib import Path
+
+        import run_context
+        rid = run_context.new_run_id()
+        out = Path("results")
+        out.mkdir(parents=True, exist_ok=True)
+        path = out / f"efficacy_live_{rid}.json"
+        path.write_text(json.dumps({
+            "run_id": rid,
+            "mode": "live",
+            "target_kind": "real-agent",
+            "proves_real_world_efficacy": bool(breached),
+            "breach": bool(breached),
+            "turns": turns,
+            "transcript": transcript,
+            "note": "Captured from a live attacker_bot call. Verify the target is a "
+                    "consented agent your team did NOT author for this to be evidence.",
+        }, indent=2, default=str))
+        logger.info("wrote live efficacy artifact: %s (breach=%s)", path, breached)
+        return str(path)
+    except Exception as e:  # noqa: BLE001 — artifact capture must not break the call
+        logger.warning("could not write live efficacy artifact: %s", e)
+        return None
+
+
 _DIAL_GUARD = None
 
 
@@ -97,16 +132,19 @@ def _dial_guard():
 def build_attacker_twiml(host: str | None = None) -> str:
     """TwiML that bridges the outbound PSTN leg back to our /attacker-ws media WS.
 
-    TODO (DEVILS_ADVOCATE_REVIEW.md 🟡, key-gated — untestable without Twilio):
-    this streams to wss://<host>/attacker-ws, but the Pipecat WorkerRunner must
-    actually SERVE a websocket route at that exact path or Twilio's connect-back
-    leg 404s. Before the first live call, confirm the runner registers
-    ``/attacker-ws`` (or change this path to match the runner's default).
+    The stream path is configurable via REDDIAL_WS_PATH (default ``/attacker-ws``):
+    the Pipecat WorkerRunner must actually SERVE a websocket route at this exact
+    path or Twilio's connect-back leg 404s. Before the first live call, confirm
+    the runner registers this path (or set REDDIAL_WS_PATH to the route it serves).
+    This remains unverifiable without a live Twilio call.
     """
     host = host or _public_host()
+    ws_path = os.environ.get("REDDIAL_WS_PATH", "/attacker-ws")
+    if not ws_path.startswith("/"):
+        ws_path = "/" + ws_path
     return (
         "<Response><Connect>"
-        f'<Stream url="wss://{host}/attacker-ws"/>'
+        f'<Stream url="wss://{host}{ws_path}"/>'
         "</Connect></Response>"
     )
 
@@ -207,8 +245,23 @@ async def _run_bot_impl(transport, max_turns: int = 12):
 
     logger.info("Starting RedDial attacker bot")
 
-    policy = AttackerPolicy(deterministic=True, max_attempts=max_turns)
+    # Real autonomy: when a Nemotron endpoint is configured, drive posture
+    # classification through the MODEL (deterministic=False) so the attacker reads
+    # varied real-agent replies. With no endpoint we fall back to the deterministic
+    # keyword path (reproducible stage demo). Set REDDIAL_FORCE_DETERMINISTIC=1 to
+    # force the keyword path even when a model is available (e.g. a scripted demo).
+    import posture as _posture
+    force_det = os.environ.get("REDDIAL_FORCE_DETERMINISTIC", "").lower() in ("1", "true", "yes")
+    classifier = None if force_det else _posture.NemotronClassifier.from_env()
+    policy = AttackerPolicy(llm=classifier, deterministic=(classifier is None),
+                            max_attempts=max_turns)
+    logger.info("Attacker posture mode: %s",
+                "model (Nemotron)" if classifier is not None else "deterministic keywords")
     context = LLMContext()
+
+    # Accumulate the live transcript so a completed call can emit an efficacy
+    # artifact (closes the capture loop for `efficacy_run.py --mode live`).
+    live_transcript: list[dict] = []
 
     class AttackDriver(FrameProcessor):
         """On each TARGET turn (transcribed text flowing downstream from STT),
@@ -226,6 +279,7 @@ async def _run_bot_impl(transport, max_turns: int = 12):
             # Only react to TARGET transcripts heading downstream toward the LLM.
             if text and isinstance(frame, TextFrame) and direction == FrameDirection.DOWNSTREAM:
                 self._turns += 1
+                live_transcript.append({"role": "target", "text": text, "state": policy.state})
                 if leak_classifier is not None:
                     leaks = leak_classifier.scan_turn(text)
                     # Use the canonical is_breach (span-equality + independent Luhn
@@ -236,11 +290,14 @@ async def _run_bot_impl(transport, max_turns: int = 12):
                 attack = policy.next_move(text, leaked=self._leaked)
                 line = lib.ladder_up(attack, policy.rung)
                 logger.info(f"[{policy.state}] next attack {attack.id}: {line}")
+                live_transcript.append({"role": "attacker", "text": line, "state": policy.state})
                 context.add_message({"role": "system", "content":
                                      f"Deliver this line now, naturally: {line}"})
                 await self.push_frame(LLMRunFrame(), FrameDirection.UPSTREAM)
                 if policy.done or self._turns >= max_turns:
                     logger.info("Attacker policy DONE")
+                    _emit_live_artifact(live_transcript, breached=self._leaked,
+                                        turns=self._turns)
             await self.push_frame(frame, direction)
 
     # REQUIRED config: NVIDIA_ASR_URL must be set per-deploy. No default — a dead

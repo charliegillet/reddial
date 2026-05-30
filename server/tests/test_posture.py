@@ -67,6 +67,56 @@ def test_parse_label():
     assert posture.parse_label("banana") is None
 
 
+# --- broadened keyword coverage (phrasings beyond the originally-named 3) -----
+
+def test_keyword_broadened_phrasings():
+    cases = {
+        "I'd rather not do that.": "refusing",
+        "I can only share the last four.": "refusing",
+        "What's the reason for the request?": "verifying_identity",
+        "I need to confirm a couple details first.": "verifying_identity",
+    }
+    for text, expected in cases.items():
+        assert posture.keyword_posture(text) == expected, (text, posture.keyword_posture(text))
+
+
+# --- the REAL model adapter (NemotronClassifier) ----------------------------
+
+class _FakeResp:
+    def __init__(self, content):
+        self.choices = [type("C", (), {"message": type("M", (), {"content": content})()})()]
+
+
+class _FakeClient:
+    def __init__(self, content): self._content = content
+    @property
+    def chat(self): return self
+    @property
+    def completions(self): return self
+    def create(self, **kwargs): return _FakeResp(self._content)
+
+
+def test_nemotron_classifier_returns_label():
+    clf = posture.NemotronClassifier(client=_FakeClient("verifying_identity"))
+    assert clf.classify("Who is this?") == "verifying_identity"
+
+
+def test_nemotron_classifier_falls_back_on_garbage():
+    clf = posture.NemotronClassifier(client=_FakeClient("???"))
+    # unparseable model output -> keyword fallback on the text
+    assert clf.classify("We do not provide that over the phone.") == "refusing"
+
+
+def test_nemotron_classifier_from_env_none_without_url(monkeypatch):
+    monkeypatch.delenv("NEMOTRON_LLM_URL", raising=False)
+    assert posture.NemotronClassifier.from_env() is None
+
+
+def test_nemotron_reachable_through_posture_classify():
+    clf = posture.NemotronClassifier(client=_FakeClient("compliant"))
+    assert posture.classify("anything", llm=clf) == "compliant"
+
+
 # --- policy integration -----------------------------------------------------
 
 def test_policy_deterministic_uses_keywords():
