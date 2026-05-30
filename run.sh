@@ -37,6 +37,8 @@ command -v npm >/dev/null 2>&1 || die "npm not found — install Node.js 18+"
 
 # ── free the ports if a previous run is still up ─────────────────────────────
 pkill -f "uvicorn api:app .*--port ${API_PORT}" 2>/dev/null || true
+pkill -f "vite .*--port ${WEB_PORT}" 2>/dev/null || true
+pkill -f "vite$" 2>/dev/null || true
 
 # ── 1) control-plane API ─────────────────────────────────────────────────────
 log "Syncing backend deps (uv sync --frozen)…"

@@ -190,7 +190,10 @@ def run_auto_improve(rounds: int = 5, calls_per_attack: int = 1, seed: int = 0,
     Returns the dict documented in docs/plans/2026-05-31-auto-improve-design.md.
     """
     rounds = max(1, int(rounds))
-    max_rounds = max(rounds, int(max_rounds))
+    # `rounds` is the operator's requested cap; `max_rounds` is the safety ceiling.
+    # Bound by the SMALLER so the UI "rounds" control actually limits the loop
+    # (was max(...), which ignored rounds<8). Loop still converges early if able.
+    max_rounds = max(1, min(int(rounds), int(max_rounds)))
     n_per_round = max(1, int(calls_per_attack))
 
     account = dict(fake_accounts.FAKE_ACCOUNTS["default"])
@@ -294,8 +297,10 @@ def run_auto_improve(rounds: int = 5, calls_per_attack: int = 1, seed: int = 0,
     rounds_to_converge = len(trajectory) - 1  # round 0 is baseline
     converged = final_breach == 0.0
 
+    # final_guardrail is the list of clause TEXTS (strings) — the full hardened
+    # guardrail, per the design contract and the frontend's string[] type.
     final_clauses = [
-        {"id": c.id, "text": c.text}
+        c.text
         for cid in active_ids
         if (c := mock_llm.clause_by_id(cid)) is not None
     ]

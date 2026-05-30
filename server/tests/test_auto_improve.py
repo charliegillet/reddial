@@ -98,8 +98,9 @@ def test_held_out_emotional_urgency_still_breaches_after_convergence():
     assert r["held_out"]["breach_before"] is True
     assert r["held_out"]["breach_after"] is True
     # resist_pressure (the only clause covering social_pressure) is never trained.
-    trained = {c["id"] for c in r["final_guardrail"]}
-    assert "resist_pressure" not in trained
+    # final_guardrail is a list of clause TEXTS; check the per-round clause ids.
+    trained_ids = {t["clause_added"] for t in r["trajectory"] if t["clause_added"]}
+    assert "resist_pressure" not in trained_ids
 
 
 def test_two_runs_are_byte_identical():
