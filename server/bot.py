@@ -78,6 +78,9 @@ async def bot(runner_args):
     """Pipecat entry point the base image calls — delegates to the role module."""
     role = _resolve_role()
     logger.info(f"RedDial dispatcher: REDDIAL_ROLE={role!r} → {_ROLE_MODULES[role]}")
+    # Fail fast + readably on missing config instead of a deep KeyError mid-call.
+    import preflight
+    preflight.enforce(role)
     module = _load_role_module(role)
     return await module.bot(runner_args)
 
