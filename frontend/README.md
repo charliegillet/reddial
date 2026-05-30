@@ -1,5 +1,8 @@
 # RedDial Dashboard
 
+**Quickest start (both servers): `./run.sh` from the repo root.**
+
+
 A voice-agent **threat console** for the RedDial offline harness — launch loopback
 scans, read the vulnerability scorecard (grade, breach/leak rates, per-vector
 breakdown, breach evidence), and browse the attack library.
