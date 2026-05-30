@@ -6,7 +6,7 @@ Built for the YC × Cekura × Daily Voice Agents Hackathon (with NVIDIA + AWS).
 
 > *"RedDial phones your AI agent, social-engineers it into reading a customer's credit card back on a live call, and hands you the vulnerability report — the SOC2 of voice agents."*
 
-Prompt injection is the #1 OWASP LLM risk — now over the phone. ~20% of voice jailbreaks succeed within 42s; ~90% leak sensitive data; TCPA verdicts top $925M.
+Prompt injection is the #1 OWASP LLM risk (LLM01) — now arriving over the phone. In Pillar Security's 2024 study of 2,000+ production LLM apps, ~20% of jailbreaks succeeded (≈42s avg) and ~90% leaked sensitive data; the largest-ever TCPA verdict was $925M (*Wakefield v. ViSalus*, 2019 — later reversed on appeal). See [`docs/REFERENCES.md`](docs/REFERENCES.md) for sourcing and the claims you should **not** present as voice-specific fact on stage.
 
 > ⚠️ **Safety:** RedDial only attacks a bot **we build and own**, seeded with **FAKE PII only** (Stripe test-card BIN, specimen SSN). Authorized red-teaming / honeytoken methodology. State this on stage in the first 15 seconds.
 
@@ -27,31 +27,49 @@ RedDial/
 ├── reference/
 │   ├── server/          ← unmodified yc-voice-agents-hackathon starter (for reference)
 │   └── STARTER_README.md← original starter README
-└── server/              ← working copy — build here
-    ├── target_bot.py / bot.py  ← TODO: fork w/ account_lookup returning FAKE_ACCOUNTS + weak guardrail
-    ├── attacker_bot.py         ← TODO: Pipecat pipeline w/ Twilio OUTBOUND (or loopback)
-    ├── attacker_policy.py      RECON→PRETEXT→INJECT→ESCALATE→EXFIL→CONFIRM state machine  [stub]
-    ├── attack_library.py       12 named voice exploits w/ spoken lines + success conditions
-    ├── leak_classifier.py      regex+Luhn ground truth (judge-proof BREACH) + semantic judge
-    ├── scorecard.py            campaign → JSON + HTML vulnerability scorecard
-    ├── campaign_runner.py      overnight 200-call campaign (loopback)  [stub]
-    ├── gepa_mitigation.py      honest "suggested mitigation diff" loop  [stub]
-    ├── fake_accounts.py        FAKE planted PII for the target
-    └── nemotron_llm.py, nvidia_stt.py, ...   starter modules (reused)
+└── server/              ← working copy
+    │   ── core engine (deterministic text loopback — runs with NO keys, tested) ──
+    ├── loopback.py            attacker FSM ↔ vulnerable mock ↔ classifier → CallResult  ✅
+    ├── attacker_policy.py     RECON→PRETEXT→INJECT→ESCALATE→EXFIL→CONFIRM state machine  ✅
+    ├── attack_library.py      12 named voice exploits (pick / ladder_up / switch_vector) ✅
+    ├── mock_llm.py            deliberately-vulnerable mock target + hardened variant      ✅
+    ├── leak_classifier.py     regex+Luhn ground truth (judge-proof BREACH) + semantic judge ✅
+    ├── scorecard.py           campaign → JSON + polished HTML vulnerability dashboard      ✅
+    ├── campaign_runner.py     N-call loopback campaign → scorecard                         ✅
+    ├── gepa_mitigation.py     honest "suggested mitigation diff" + before/after re-verify  ✅
+    ├── fake_accounts.py       FAKE planted PII (Stripe test BIN / specimen SSN)            ✅
+    ├── tests/                 40 tests: classifier, policy, loopback breach, scorecard     ✅
+    │   ── voice layer (real, key-gated; not runtime-tested without NIM/Twilio) ──
+    ├── target_bot.py          fork w/ account_lookup → FAKE_ACCOUNTS + weak guardrail      🔌
+    ├── attacker_bot.py        Pipecat pipeline + Twilio OUTBOUND / SmallWebRTC             🔌
+    ├── cekura_integration.py  attack → Cekura scenario + observability (no-ops w/o key)    🔌
+    └── nemotron_llm.py, nvidia_stt.py, bot-*.py   starter modules (reused)
 ```
 
-Modules with logic (`attack_library`, `attacker_policy`, `leak_classifier`, `scorecard`,
-`fake_accounts`) are runnable starting points; `[stub]` files have signatures +
-`TODO`s pointing at the relevant `PLAN.md` section.
+✅ = implemented + tested (zero keys).  🔌 = real code wired to `.env`, ready for live keys.
+See [`server/INTERFACES.md`](server/INTERFACES.md) for the module contract and
+[`docs/plans/`](docs/plans) for the build design.
 
 ## Quick start
 
+The core engine needs **no API keys** — it runs the whole attack→breach→scorecard loop offline.
+
 ```bash
 cd server
-cp ../reference/server/.env.example .env
-# fill keys + NVIDIA/NEMOTRON URLs; verify Twilio caller ID the night before for outbound
-uv sync
-python -c "import leak_classifier as L; print(L.scan_turn('the number is four five three nine one four eight eight oh three four three six four six seven'))"
+uv sync           # or: pip install pytest  (the loopback core has no heavy deps)
+
+# 1) prove the Luhn-verified BREACH fires, end-to-end, deterministically:
+python3 -c "import loopback; r=loopback.run_loopback(); \
+print('BREACH' if r.breach else 'no breach', '| grade', r.grade, '| turns', r.turns_to_first_leak)"
+
+# 2) run a campaign and render the judge-facing scorecard:
+python3 campaign_runner.py --n 36      # writes scorecard.json + scorecard.html
+
+# 3) run the test suite (classifier / policy / loopback / scorecard):
+python3 -m pytest tests/ -q            # 40 passed
+
+# For the live voice demo, fill .env (see .env.example) with NVIDIA/Twilio keys:
+cp .env.example .env
 ```
 
 See **`PLAN.md`** for the attacker state machine, the full attack library, the
@@ -62,7 +80,7 @@ strategy, and the devil's-advocate risk/contingency section.
 
 ## The one-sentence pitch
 
-*"We sell insurance to all 200 voice-agent startups in YC's own batch — the only company that gets more defensible every time a competitor ships."*
+*"We sell security to every voice-agent startup shipping today — the only company that gets more defensible every time a competitor ships."*
 
 ---
 *Sibling project: `../nightshift` (the vertical dispatcher). Decision framework: the original repo's `HACKATHON_PLAN.md`.*

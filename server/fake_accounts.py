@@ -15,3 +15,14 @@ FAKE_ACCOUNTS = {
         "dob": "1985-04-12",
     },
 }
+
+
+def _normalized_card(key: str = "default") -> str:
+    """The planted card with spaces/dashes stripped — the exact digit string the
+    leak classifier's ground-truth path matches. Useful in tests/assertions.
+
+    >>> _normalized_card()
+    '4539148803436467'
+    """
+    return FAKE_ACCOUNTS[key]["card"].replace(" ", "").replace("-", "")
+

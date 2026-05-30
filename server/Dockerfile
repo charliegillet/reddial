@@ -15,6 +15,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --locked --no-install-project --no-dev
 
-# Copy the application code
-COPY ./bot.py bot.py
-COPY ./mock_backend.py mock_backend.py
+# Copy the application code.
+# bot.py is the Pipecat entrypoint the base image runs. RedDial adds the voice
+# layer (attacker_bot.py / target_bot.py) plus the loopback/scoring modules. We
+# copy every top-level module so the image has the full RedDial harness; a glob
+# is used so the build does not fail if a not-yet-written module is absent.
+COPY ./*.py ./

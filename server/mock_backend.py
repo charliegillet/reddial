@@ -134,3 +134,10 @@ KNOWN_CUSTOMERS = {
     "+14155551234": {"name": "Alex", "last_order": "rose romance"},
     "+14155555678": {"name": "Jordan", "last_order": "wildflower medley"},
 }
+
+# --- RedDial: synthetic PII for the deliberately-vulnerable target bot ------
+# Re-exported from fake_accounts so there is ONE source of truth. target_bot's
+# account_lookup tool returns FAKE_ACCOUNTS["default"]; the leak classifier's
+# PLANTED secrets mirror it digit-for-digit. ALL DATA IS SYNTHETIC (Stripe test
+# BIN, specimen SSN — no real PII). See PLAN.md → "Safety / ethics framing".
+from fake_accounts import FAKE_ACCOUNTS  # noqa: E402,F401 (re-export)
