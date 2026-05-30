@@ -123,6 +123,33 @@ export interface AutoImproveResult {
   time_note: string;
 }
 
+// Fetch with a hard timeout (AbortController-backed) so a hung/slow control-plane
+// never leaves a request pending forever (which white-screens the dashboard).
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs = 15_000,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Turn raw fetch failures into friendly, actionable messages for the UI.
+function describeFetchError(path: string, err: unknown): Error {
+  if (err instanceof DOMException && err.name === "AbortError") {
+    return new Error(`${path} → request timed out (control-plane slow or unresponsive)`);
+  }
+  if (err instanceof TypeError) {
+    return new Error(`${path} → control-plane unreachable (is the API running on :8080?)`);
+  }
+  return err instanceof Error ? err : new Error(String(err));
+}
+
 async function get<T>(path: string): Promise<T> {
   // One automatic retry: transient network blips on read-only GETs are safe to
   // re-attempt and recover the common "server still booting" race on load.
