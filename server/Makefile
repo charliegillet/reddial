@@ -34,6 +34,13 @@ efficacy:  ## One honestly-labeled loopback efficacy artifact (results/)
 cekura-check:  ## Probe Cekura connectivity (loud status, not a silent no-op)
 	$(UV) run python -c "import cekura_integration as C; print(C.check_connection())"
 
+cekura-sync:  ## Push the persona pack + one loopback run to Cekura (needs CEKURA_* in .env)
+	$(UV) run python -c "from dotenv import load_dotenv; load_dotenv('.env'); \
+import cekura_integration as C, attack_library as A, loopback; \
+reg=C.register_personas(A.ATTACKS); print('scenarios posted:', sum(1 for r in reg if r.get('posted')), '/', len(reg)); \
+r=loopback.run_loopback(attack_id='authority_pretext', seconds_per_turn=9.0); \
+print('observability posted:', C.post_observability(r, call_id='reddial-sync'))"
+
 dashboard:  ## Run the OFFLINE control-plane API for the dashboard (then: cd ../frontend && npm run dev)
 	@echo "RedDial dashboard — OFFLINE only (loopback; no live dialing)."
 	@echo "API:      http://localhost:8080  (docs at /docs)"
