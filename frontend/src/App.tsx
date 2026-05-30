@@ -66,6 +66,9 @@ export function App() {
   }, [bellOpen]);
 
   async function runScan() {
+    // Always surface the result: jump to the Dashboard so the scanning state +
+    // scorecard are visible no matter which view Launch was clicked from.
+    setActiveView("dashboard");
     setRunning(true);
     setErr(null);
     try {
@@ -170,22 +173,6 @@ export function App() {
               )}
             </div>
 
-            <div className="user-avatar" aria-label="User" title="Operator">
-              <svg viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Operator avatar">
-                <rect width="32" height="32" rx="16" fill="var(--accent-acid-dim)" />
-                <text
-                  x="16"
-                  y="21"
-                  textAnchor="middle"
-                  fontFamily="var(--font-display)"
-                  fontSize="13"
-                  fontWeight="700"
-                  fill="var(--accent-acid)"
-                >
-                  OP
-                </text>
-              </svg>
-            </div>
           </div>
         </header>
 

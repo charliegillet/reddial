@@ -1052,6 +1052,33 @@ body::after {
 }
 
 /* ── Conversation / Transcript view ── */
+.convo-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.convo-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.convo-btn:hover {
+  color: var(--accent-acid);
+  border-color: var(--accent-acid);
+  background: var(--accent-acid-dim);
+}
+
 .transcript-note {
   display: flex;
   align-items: flex-start;

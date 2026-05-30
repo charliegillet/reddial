@@ -54,7 +54,7 @@ export function SettingsView({ apiBase, version, health }: SettingsViewProps) {
             <div className="banner-icon"><ShieldCheck size={20} /></div>
             <div className="banner-text">
               <p><strong>DIALING DISABLED · OFFLINE HARNESS</strong></p>
-              <p>This console never places live calls. All runs execute against a deterministic, in-process loopback target using synthetic PII (Stripe test BINs, specimen SSNs). No third-party network calls are made from the UI.</p>
+              <p>This console never places live calls. All runs execute against a deterministic, in-process loopback target using synthetic PII (Stripe test BINs, specimen SSNs). No third-party calls are made in the scan/data path (the only external request is the Google Fonts stylesheet).</p>
             </div>
           </div>
           <div className="chip-group" style={{ marginTop: 0 }}>

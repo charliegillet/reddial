@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { MessagesSquare, ShieldAlert, Bot, Phone, Info } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { MessagesSquare, ShieldAlert, Bot, Phone, Info, Play, Square, Download } from "lucide-react";
 import { motion } from "framer-motion";
 import { api, type Summary } from "../api";
 
@@ -98,6 +98,52 @@ export function ConversationView({ summary }: ConversationViewProps) {
   const turns = data?.transcript ?? [];
   const breachTurn = data?.breach_turn ?? null;
 
+  // ── HEAR the call: browser SpeechSynthesis (no keys, no audio service). Reads
+  //    each turn aloud, a distinct voice/pitch for attacker vs target. ──
+  const [speaking, setSpeaking] = useState(false);
+  const synthRef = useRef<SpeechSynthesis | null>(
+    typeof window !== "undefined" ? window.speechSynthesis : null,
+  );
+  const ttsSupported = !!synthRef.current;
+
+  useEffect(() => () => { synthRef.current?.cancel(); }, []);
+
+  function playConversation() {
+    const synth = synthRef.current;
+    if (!synth || turns.length === 0) return;
+    synth.cancel();
+    const voices = synth.getVoices();
+    turns.forEach((t) => {
+      const u = new SpeechSynthesisUtterance(`${t.role === "attacker" ? "Attacker" : "Target"}: ${t.text}`);
+      // Distinguish the two speakers by pitch/rate (+ different voice if available).
+      u.pitch = t.role === "attacker" ? 0.85 : 1.15;
+      u.rate = 1.02;
+      if (voices.length > 1) u.voice = t.role === "attacker" ? voices[0] : voices[voices.length - 1];
+      synth.speak(u);
+    });
+    const done = new SpeechSynthesisUtterance("");
+    done.onend = () => setSpeaking(false);
+    synth.speak(done);
+    setSpeaking(true);
+  }
+
+  function stopConversation() {
+    synthRef.current?.cancel();
+    setSpeaking(false);
+  }
+
+  // ── SAVE the call: download the transcript as JSON (works offline). ──
+  function saveTranscript() {
+    if (!data) return;
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `reddial-transcript-${data.run_id ?? data.attack_id ?? "call"}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <motion.div
       initial={{ y: 10 }}
@@ -108,12 +154,30 @@ export function ConversationView({ summary }: ConversationViewProps) {
         <div className="card-header">
           <MessagesSquare size={18} className="brand-icon" />
           <span className="card-title">Attacker ↔ Target Conversation</span>
-          {data?.run_id && (
-            <span className="evidence-meta" style={{ marginLeft: "auto" }}>
-              run {data.run_id}
-              {data.attack_id ? ` · ${data.attack_id}` : ""}
-            </span>
-          )}
+          <div className="convo-actions" style={{ marginLeft: "auto" }}>
+            {data?.run_id && (
+              <span className="evidence-meta">
+                run {data.run_id}{data.attack_id ? ` · ${data.attack_id}` : ""}
+              </span>
+            )}
+            {ttsSupported && turns.length > 0 && (
+              <button
+                type="button"
+                className="convo-btn"
+                onClick={speaking ? stopConversation : playConversation}
+                title={speaking ? "Stop playback" : "Hear the conversation (browser speech)"}
+              >
+                {speaking ? <Square size={14} /> : <Play size={14} />}
+                {speaking ? "Stop" : "Hear"}
+              </button>
+            )}
+            {turns.length > 0 && (
+              <button type="button" className="convo-btn" onClick={saveTranscript}
+                      title="Download this conversation as JSON">
+                <Download size={14} /> Save
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="card-body">
@@ -141,7 +205,14 @@ export function ConversationView({ summary }: ConversationViewProps) {
           ) : (
             <div className="transcript-timeline">
               {turns.map((t, i) => {
-                const isBreach = breachTurn === i || (t.state ?? "").toLowerCase() === "leaked";
+                // Flag the breaching turn even when the API gives no breach_turn/state:
+                // on a confirmed breach, the leaking turn is the TARGET reading back a
+                // long digit run (the full card). digitCount>=13 == a PAN read-back.
+                const digitCount = (t.text.match(/\d/g) ?? []).length;
+                const isBreach =
+                  breachTurn === i ||
+                  (t.state ?? "").toLowerCase() === "leaked" ||
+                  (!!data?.breach && t.role === "target" && digitCount >= 13);
                 const isAttacker = t.role === "attacker";
                 return (
                   <motion.div
