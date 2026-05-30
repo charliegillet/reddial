@@ -61,8 +61,8 @@ def reverify(attack_id: str, patched_guardrail: str | None = None) -> dict:
     # Hardened target. mock_llm owns the guardrail constants + MockTargetLLM.
     hardened_target = None
     try:
-        import mock_llm
         import fake_accounts
+        import mock_llm
 
         guardrail = patched_guardrail or getattr(mock_llm, "HARDENED_GUARDRAIL", None)
         if guardrail is not None:

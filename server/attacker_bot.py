@@ -92,19 +92,28 @@ def build_attacker_twiml(host: str | None = None) -> str:
 
 
 def place_outbound_call(to_number: str, from_number: str | None = None,
-                        host: str | None = None):
+                        host: str | None = None, consent: bool = False):
     """Place a Twilio OUTBOUND call from RedDial to the target number.
 
     RedDial *initiates* the call (unlike the inbound starter); Twilio then
     connects a media ``<Stream>`` back to ``/attacker-ws`` where the same
     serializer/transport path handles audio.
 
-    SAFETY: only ever dial a number under our control or a consented, authorized
-    target. ``from_number`` MUST be a Twilio-verified caller ID.
+    SAFETY (ENFORCED, not just promised): before any dialing this calls
+    ``safety_controls.check_destination`` — which fails CLOSED unless the
+    ``REDDIAL_DIALING_ENABLED`` kill-switch is on, ``to_number`` is E.164 AND in
+    the ``REDDIAL_DIAL_ALLOWLIST``, and ``consent=True`` is passed for this
+    destination. The public host is sanitized against TwiML/XML injection.
+    ``from_number`` MUST be a Twilio-verified caller ID.
 
     Lazy-imports twilio and reads credentials only when actually called, so the
     module imports cleanly with no keys. Raises a clear error if misconfigured.
     """
+    # --- ENFORCED safety gate (fail-closed) — must run before anything else ---
+    import safety_controls
+    safety_controls.check_destination(to_number, consent=consent)
+    host = safety_controls.validate_public_host(host or _public_host())
+
     account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
     auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
     from_number = from_number or os.environ.get("VERIFIED_CALLER_ID")
@@ -132,7 +141,9 @@ def place_outbound_call(to_number: str, from_number: str | None = None,
 
     client = Client(account_sid, auth_token)
     twiml = build_attacker_twiml(host)
-    logger.info(f"RedDial placing OUTBOUND call to {to_number} from {from_number}")
+    # Mask the destination in logs (don't leak dialed targets).
+    masked = to_number[:3] + "…" + to_number[-2:] if len(to_number) > 5 else "…"
+    logger.info(f"RedDial placing OUTBOUND call to {masked} (gated+consented)")
     return client.calls.create(to=to_number, from_=from_number, twiml=twiml)
 
 
@@ -152,6 +163,7 @@ def run_bot(*args, **kwargs):
 
 async def _run_bot_impl(transport, max_turns: int = 12):
     # Lazy imports: only needed when actually running the voice pipeline.
+    from pipecat.audio.vad.silero import SileroVADAnalyzer
     from pipecat.frames.frames import LLMRunFrame, TextFrame
     from pipecat.pipeline.pipeline import Pipeline
     from pipecat.pipeline.worker import PipelineParams, PipelineWorker
@@ -161,10 +173,9 @@ async def _run_bot_impl(transport, max_turns: int = 12):
         LLMUserAggregatorParams,
     )
     from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-    from pipecat.audio.vad.silero import SileroVADAnalyzer
+    from pipecat.services.gradium.tts import GradiumTTSService
     from pipecat.turns.user_turn_strategies import FilterIncompleteUserTurnStrategies
     from pipecat.workers.runner import WorkerRunner
-    from pipecat.services.gradium.tts import GradiumTTSService
 
     # Reuse the starter's NIM services verbatim.
     from nemotron_llm import VLLMOpenAILLMService
@@ -208,15 +219,18 @@ async def _run_bot_impl(transport, max_turns: int = 12):
                     logger.info("Attacker policy DONE")
             await self.push_frame(frame, direction)
 
+    # REQUIRED config: NVIDIA_ASR_URL must be set per-deploy. No default — a dead
+    # dev LAN IP would silently time out in a cloud deploy.
     stt = NVidiaWebSocketSTTService(
-        url=os.environ.get("NVIDIA_ASR_URL", "ws://192.168.7.228:8081"),
+        url=os.getenv("NVIDIA_ASR_URL", ""),
         strip_interim_prefix=True,
     )
 
     enable_thinking = os.environ.get("NEMOTRON_ENABLE_THINKING", "false").lower() == "true"
     llm = VLLMOpenAILLMService(
         api_key=os.environ.get("NEMOTRON_LLM_API_KEY", "EMPTY"),
-        base_url=os.environ.get("NEMOTRON_LLM_URL", "http://192.168.7.228:8000/v1"),
+        # REQUIRED config: NEMOTRON_LLM_URL must be set per-deploy (OpenAI-compatible /v1).
+        base_url=os.getenv("NEMOTRON_LLM_URL", ""),
         settings=VLLMOpenAILLMService.Settings(
             model=os.environ.get("NEMOTRON_LLM_MODEL", "nvidia/nemotron-3-super"),
             system_instruction=ATTACKER_SYSTEM_PROMPT,

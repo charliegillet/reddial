@@ -22,7 +22,10 @@ logger = logging.getLogger("reddial.cekura")
 
 _BASE_URL = os.environ.get("CEKURA_BASE_URL", "https://api.cekura.ai")
 _SCENARIOS_PATH = "/test_framework/v1/scenarios/run"
-_OBSERVABILITY_PATH = "/test_framework/v1/observability"
+# Corrected per docs/REFERENCES.md: the real observability path is
+# `observability/send-calls` (the previous `/test_framework/v1/observability`
+# was unverified / 404). Override-able via CEKURA_OBSERVABILITY_PATH.
+_OBSERVABILITY_PATH = os.environ.get("CEKURA_OBSERVABILITY_PATH", "/observability/send-calls")
 
 
 def _api_key() -> str | None:
@@ -91,6 +94,51 @@ def _safe_json(resp) -> object:
             return resp.text
         except Exception:
             return None
+
+
+def check_connection() -> dict:
+    """Actively probe Cekura and report an EXPLICIT status — never a silent no-op.
+
+    Graceful degradation (the no-op in ``_post``) keeps the demo alive when the
+    integration is misconfigured, but it also HIDES that the integration is
+    unproven. Call this to find out the truth. Returns one of:
+        {"ok": True,  "status": "ok"}
+        {"ok": False, "status": "no_key" | "no_http_client" |
+                                 "auth_failed" | "unreachable" | "http_error", "detail": ...}
+    """
+    key = _api_key()
+    if not key:
+        logger.error("Cekura check_connection: NO API KEY — integration is NOT active.")
+        return {"ok": False, "status": "no_key",
+                "detail": "set CEKURA_API_KEY; graceful no-op != working integration"}
+
+    path = os.environ.get("CEKURA_HEALTH_PATH", "/test_framework/v1/scenarios")
+    url = _BASE_URL.rstrip("/") + path
+    headers = {"X-CEKURA-API-KEY": key}
+    try:
+        try:
+            import requests  # type: ignore
+            resp = requests.get(url, headers=headers, timeout=10)
+            status = resp.status_code
+        except ImportError:
+            import httpx  # type: ignore
+            resp = httpx.get(url, headers=headers, timeout=10)
+            status = resp.status_code
+    except ImportError:
+        logger.error("Cekura check_connection: neither requests nor httpx installed.")
+        return {"ok": False, "status": "no_http_client", "detail": "pip install requests"}
+    except Exception as e:
+        logger.error("Cekura check_connection: UNREACHABLE (%s)", e)
+        return {"ok": False, "status": "unreachable", "detail": str(e)}
+
+    if status in (401, 403):
+        logger.error("Cekura check_connection: AUTH FAILED (HTTP %s)", status)
+        return {"ok": False, "status": "auth_failed", "detail": f"HTTP {status}"}
+    if 200 <= status < 300:
+        logger.info("Cekura check_connection: OK (HTTP %s)", status)
+        return {"ok": True, "status": "ok", "detail": f"HTTP {status}"}
+    logger.error("Cekura check_connection: HTTP %s", status)
+    return {"ok": False, "status": "http_error", "detail": f"HTTP {status}"}
 
 
 def to_scenario(attack) -> dict:

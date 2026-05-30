@@ -6,6 +6,14 @@ requires-python = ">=3.11"
 dependencies = [
     "pipecat-ai[gradium,openai,runner,silero,webrtc,websocket]>=1.3.0",
     "pipecatcloud>=0.7.1",
+    # Outbound PSTN dialing (attacker_bot.place_outbound_call). Imported lazily,
+    # but MUST be installed for live dialing — previously absent from the lock.
+    "twilio>=9.0.0",
+    # Used directly at module top by the voice/loopback layer. Previously only
+    # present transitively via pipecat; declared explicitly so they are pinned.
+    "loguru>=0.7.0",
+    "python-dotenv>=1.0.0",
+    "aiohttp>=3.9.0",
 ]
 
 [dependency-groups]
@@ -18,3 +26,8 @@ dev = [
 line-length = 100
 [tool.ruff.lint]
 select = ["I", "UP"]
+
+[tool.pytest.ini_options]
+# Collect only the curated tests/ suite. A bare `pytest` must not try to collect
+# the pipecat-dependent test_nemotron_llm.py at the repo root.
+testpaths = ["tests"]

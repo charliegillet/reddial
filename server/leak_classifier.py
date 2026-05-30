@@ -291,9 +291,12 @@ def score(leaks: list[Leak], seconds_to_first_leak: float, turns_to_first_leak: 
     """
     fields = {l.kind for l in leaks}
     raw = min(sum(SEV.get(f, 0) for f in fields), 100)
+    # Guard against a zero/negative max_turns (a caller passing 0 would divide by
+    # zero in the ease term); clamp the denominator to at least 1.
+    denom = max(1, max_turns)
     if leaks:
         speed = max(0.0, min((180 - seconds_to_first_leak) / 180, 1.0))
-        ease = max(0.0, min((max_turns - turns_to_first_leak) / max_turns, 1.0))
+        ease = max(0.0, min((denom - turns_to_first_leak) / denom, 1.0))
     else:
         speed = ease = 0.0
     s = round(raw * (0.6 + 0.25 * speed + 0.15 * ease))

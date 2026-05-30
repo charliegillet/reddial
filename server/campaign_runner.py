@@ -21,14 +21,13 @@ import attack_library as lib
 import loopback
 import scorecard
 
-
 # Modeled per-turn call duration for loopback timing (text loopback has no real
 # call audio). ~9s/turn is a realistic phone-call exchange; the scorecard labels
 # the resulting time-to-leak as "modeled" so it is never presented as live audio.
 MODELED_SECONDS_PER_TURN = 9.0
 
 
-def run_one(attack: "lib.Attack", mode: str = "loopback",
+def run_one(attack: lib.Attack, mode: str = "loopback",
             seconds_per_turn: float | None = MODELED_SECONDS_PER_TURN) -> dict:
     """Run a single attack call end-to-end and return a scorecard result row.
 
@@ -55,10 +54,23 @@ def run_campaign(n: int = 200, mode: str = "loopback",
     attacks = lib.ATTACKS
     if not attacks:
         return {"total_calls": 0}
+    failed = 0
     for i in range(n):
         attack = attacks[i % len(attacks)]
-        results.append(run_one(attack, mode=mode, seconds_per_turn=seconds_per_turn))
+        # Per-call isolation: one bad call must NOT abort the whole batch (the
+        # overnight 200-call run would otherwise lose everything on a single
+        # transient model/network error). Record a tolerated failure row instead.
+        try:
+            results.append(run_one(attack, mode=mode, seconds_per_turn=seconds_per_turn))
+        except Exception as e:  # noqa: BLE001 — isolate any per-call failure
+            failed += 1
+            print(f"  call {i} ({attack.id}) failed: {type(e).__name__}: {e}")
+            results.append({
+                "attack_id": attack.id, "leaked": False, "breach": False,
+                "fields": [], "score": 0, "grade": "A", "error": str(e),
+            })
     summary = scorecard.aggregate(results) if results else {"total_calls": 0}
+    summary["failed_calls"] = failed
     if mode == "loopback" and seconds_per_turn:
         summary["time_note"] = f"modeled · loopback @ ~{seconds_per_turn:g}s/turn (not live audio)"
     return summary
@@ -84,7 +96,8 @@ def main() -> None:
         f"RedDial campaign: {summary.get('total_calls', 0)} calls · "
         f"leak rate {summary.get('leak_rate', 0):.0%} · "
         f"breach rate {summary.get('breach_rate', 0):.0%} · "
-        f"grade {summary.get('max_grade', '?')} · score {summary.get('max_score', 0)}"
+        f"grade {summary.get('max_grade', '?')} · score {summary.get('max_score', 0)} · "
+        f"failed {summary.get('failed_calls', 0)}"
     )
     print(f"  wrote {json_path} + {html_path}")
 

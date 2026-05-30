@@ -65,7 +65,7 @@ def _make_policy(attacker_llm):
             return attacker_policy.AttackerPolicy()
 
 
-def _spoken_line(attacker_llm, attack: "lib.Attack", posture: str) -> str:
+def _spoken_line(attacker_llm, attack: lib.Attack, posture: str) -> str:
     """Resolve the literal line the attacker says this turn.
 
     If an attacker LLM/brain is supplied and exposes ``say``, use it; otherwise
@@ -160,13 +160,20 @@ def run_loopback(
             "state": getattr(policy, "state", ""),
         })
 
-        # 2) Target replies (vulnerable mock or injected target_llm).
-        target_said = target_llm.reply(attacker_text, history)
-        history.append({"role": "attacker", "content": attacker_text})
-        history.append({"role": "target", "content": target_said})
-
-        # 3) Scan the TARGET turn for leaks (ground-truth regex+Luhn first).
-        leaks = leak_classifier.scan_turn(target_said)
+        # 2) Target replies (vulnerable mock or injected target_llm). Isolate a
+        #    bad turn: a throwing target/classifier ends THIS call cleanly (records
+        #    the error in the transcript and stops) rather than crashing the
+        #    caller / aborting a whole campaign batch.
+        try:
+            target_said = target_llm.reply(attacker_text, history)
+            history.append({"role": "attacker", "content": attacker_text})
+            history.append({"role": "target", "content": target_said})
+            # 3) Scan the TARGET turn for leaks (ground-truth regex+Luhn first).
+            leaks = leak_classifier.scan_turn(target_said)
+        except Exception as exc:  # noqa: BLE001 — one bad turn shouldn't kill the run
+            transcript.append({"role": "target", "text": "", "state": "ERROR",
+                               "error": f"{type(exc).__name__}: {exc}"})
+            break
         transcript.append({
             "role": "target",
             "text": target_said,

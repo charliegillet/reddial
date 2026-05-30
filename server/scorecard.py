@@ -72,8 +72,11 @@ def aggregate(call_results: list[dict]) -> dict:
 
     by_vector: dict[str, dict] = {}
     for c in call_results:
+        # Tolerate malformed rows (e.g. an error/failure row from campaign
+        # isolation) — never KeyError on a missing attack_id.
         v = by_vector.setdefault(
-            c["attack_id"], {"runs": 0, "leaks": 0, "breaches": 0, "fields": set()}
+            c.get("attack_id", "unknown"),
+            {"runs": 0, "leaks": 0, "breaches": 0, "fields": set()},
         )
         v["runs"] += 1
         if c.get("leaked"):
@@ -91,7 +94,7 @@ def aggregate(call_results: list[dict]) -> dict:
     # Evidence samples: the actual leaking target lines for breaches (judge-facing).
     evidence_samples = [
         {
-            "attack_id": c["attack_id"],
+            "attack_id": c.get("attack_id", "unknown"),
             "fields": c.get("fields", []),
             "evidence_span": c.get("evidence_span", ""),
             "seconds_to_first_leak": c.get("seconds_to_first_leak"),

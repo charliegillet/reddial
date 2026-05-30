@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies (locked)
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check .
+
+      # Run ONLY the curated suite. A bare `pytest` would try to collect the
+      # pipecat-dependent test_nemotron_llm.py at the repo root; `tests/` (plus
+      # testpaths in pyproject) keeps collection to the supported tests.
+      - name: Test
+        run: uv run pytest tests/ -q

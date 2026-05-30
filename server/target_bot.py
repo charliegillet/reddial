@@ -394,19 +394,24 @@ async def run_bot(
     # Speech-to-Text service
     #
     # Nemotron Speech Streaming STT, served over WebSocket. The server expects
-    # 16-bit PCM, 16 kHz, mono — matching the WebRTC input path. The URL can be
-    # overridden via NVIDIA_ASR_URL.
+    # 16-bit PCM, 16 kHz, mono — matching the WebRTC input path.
+    # REQUIRED config: NVIDIA_ASR_URL must be set per-deploy. No default — a
+    # missing value fails loudly here instead of silently timing out against a
+    # dead dev-LAN IP in a cloud deploy.
     stt = NVidiaWebSocketSTTService(
-        url=os.getenv("NVIDIA_ASR_URL", "ws://192.168.7.228:8081"),
+        url=os.getenv("NVIDIA_ASR_URL", ""),
         strip_interim_prefix=True,
     )
 
     # LLM service — Nemotron-3-Super-120B served by vLLM (OpenAI-compatible chat
     # completions at /v1). See bot-nemotron.py for the thinking-toggle caveats.
     enable_thinking = os.getenv("NEMOTRON_ENABLE_THINKING", "false").lower() == "true"
+    # REQUIRED config: NEMOTRON_LLM_URL must be set per-deploy (OpenAI-compatible
+    # /v1 base URL). No default — a missing value fails loudly instead of
+    # silently pointing at a dead dev-LAN IP.
     llm = VLLMOpenAILLMService(
         api_key=os.getenv("NEMOTRON_LLM_API_KEY", "EMPTY"),  # vLLM ignores unless --api-key set
-        base_url=os.getenv("NEMOTRON_LLM_URL", "http://192.168.7.228:8000/v1"),
+        base_url=os.getenv("NEMOTRON_LLM_URL", ""),
         settings=VLLMOpenAILLMService.Settings(
             model=os.getenv("NEMOTRON_LLM_MODEL", "nvidia/nemotron-3-super"),
             system_instruction=system_instruction,
