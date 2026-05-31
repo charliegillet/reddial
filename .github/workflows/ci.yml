@@ -70,7 +70,7 @@ jobs:
       # this image must be built for arm64. ubuntu-latest is amd64, so register
       # QEMU to emulate arm64 during the build.
       - name: Set up QEMU (arm64 emulation)
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
           platforms: arm64
 
