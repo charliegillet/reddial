@@ -1,5 +1,13 @@
 # RedDial — Build Plan
 
+> **As-built deltas (read this first).** This is the original plan; two stack
+> choices changed during the build. The authoritative description of what shipped is
+> [`README.md`](README.md). Deltas: **(1) TTS shipped as Gradium** (`GradiumTTSService`),
+> not NVIDIA Magpie — wherever this doc says "Magpie," the running code uses Gradium.
+> **(2) The breach classifier is deterministic regex+Luhn** (`leak_classifier.py`), not
+> a Nemotron model — Nemotron is only an *optional* semantic judge for non-card leaks.
+> Some sections below also contain day-of demo/strategy notes that are historical.
+
 **An autonomous voice red-team that places real calls to a target voice agent, social-engineers it into leaking planted (fake) PII, and emits a verified vulnerability scorecard.** Shipped as a **Cekura ecosystem plug-in** (adversarial "social-engineer" persona pack), NOT a competitor.
 
 > *"RedDial phones your AI agent, social-engineers it into reading a customer's credit card back on a live call, and hands you the vulnerability report — the SOC2 of voice agents."*
