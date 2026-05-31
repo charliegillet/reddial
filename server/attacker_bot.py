@@ -15,7 +15,7 @@ the attacker's context each turn so its next spoken line is the next attack.
 Supports two transports:
   * SmallWebRTC (local dev loop, ``uv run attacker_bot.py``)
   * Twilio OUTBOUND — RedDial *initiates* the call via the REST API pointing at a
-    TwiML ``<Connect><Stream>`` back to ``/attacker-ws`` (see ``place_outbound_call``).
+    TwiML ``<Connect><Stream>`` back to ``/ws`` (the runner's telephony route; see ``place_outbound_call``).
 
 SAFETY: this attacks a bot WE built and own, seeded with FAKE PII only (Stripe
 test BIN / specimen SSN). Outbound dialing is only ever to our own number or a
@@ -32,6 +32,7 @@ from loguru import logger
 
 import attack_library as lib
 from attacker_policy import AttackerPolicy
+from env_utils import clean_env
 
 # leak_classifier is a pure module (regex/Luhn ground truth); safe to import here.
 try:
@@ -94,13 +95,18 @@ def _emit_live_artifact(transcript: list[dict], breached: bool, turns: int) -> s
         path.write_text(json.dumps({
             "run_id": rid,
             "mode": "live",
-            "target_kind": "real-agent",
-            "proves_real_world_efficacy": bool(breached),
+            # HONESTY: the bot cannot know whether the dialed target was authored by
+            # this team. A breach here is NOT self-certifying proof — an operator
+            # must confirm the target is a non-self-authored, consented agent and
+            # set this true by hand. We never auto-assert real-world efficacy.
+            "target_kind": "live-call (operator must verify the target is non-self-authored)",
+            "proves_real_world_efficacy": None,
             "breach": bool(breached),
             "turns": turns,
             "transcript": transcript,
-            "note": "Captured from a live attacker_bot call. Verify the target is a "
-                    "consented agent your team did NOT author for this to be evidence.",
+            "note": "Captured from a live attacker_bot call. This is evidence ONLY if "
+                    "the target is a consented agent your team did NOT author — confirm "
+                    "that and set proves_real_world_efficacy=true manually.",
         }, indent=2, default=str))
         logger.info("wrote live efficacy artifact: %s (breach=%s)", path, breached)
         return str(path)
@@ -130,16 +136,16 @@ def _dial_guard():
 
 
 def build_attacker_twiml(host: str | None = None) -> str:
-    """TwiML that bridges the outbound PSTN leg back to our /attacker-ws media WS.
+    """TwiML that bridges the outbound PSTN leg back to our /ws media WS.
 
-    The stream path is configurable via REDDIAL_WS_PATH (default ``/attacker-ws``):
-    the Pipecat WorkerRunner must actually SERVE a websocket route at this exact
-    path or Twilio's connect-back leg 404s. Before the first live call, confirm
-    the runner registers this path (or set REDDIAL_WS_PATH to the route it serves).
-    This remains unverifiable without a live Twilio call.
+    Streams to the route the Pipecat runner ACTUALLY serves for telephony media:
+    ``/ws`` (pipecat.runner.run registers ``@app.websocket("/ws")`` and dispatches
+    to this module's ``bot(WebSocketRunnerArguments)``). Override with
+    REDDIAL_WS_PATH only if you front the bot with a custom server on a different
+    path. (The earlier ``/attacker-ws`` default 404'd — the runner never served it.)
     """
     host = host or _public_host()
-    ws_path = os.environ.get("REDDIAL_WS_PATH", "/attacker-ws")
+    ws_path = os.environ.get("REDDIAL_WS_PATH", "/ws")
     if not ws_path.startswith("/"):
         ws_path = "/" + ws_path
     return (
@@ -154,7 +160,7 @@ def place_outbound_call(to_number: str, from_number: str | None = None,
     """Place a Twilio OUTBOUND call from RedDial to the target number.
 
     RedDial *initiates* the call (unlike the inbound starter); Twilio then
-    connects a media ``<Stream>`` back to ``/attacker-ws`` where the same
+    connects a media ``<Stream>`` back to ``/ws`` where the same
     serializer/transport path handles audio.
 
     SAFETY (ENFORCED, not just promised): before any dialing this calls
@@ -322,7 +328,7 @@ async def _run_bot_impl(transport, max_turns: int = 12):
     tts = GradiumTTSService(
         api_key=os.environ["GRADIUM_API_KEY"],
         settings=GradiumTTSService.Settings(
-            voice=os.environ.get("GRADIUM_VOICE_ID", "Eu9iL_CYe8N-Gkx_"),
+            voice=clean_env("GRADIUM_VOICE_ID", "Eu9iL_CYe8N-Gkx_"),
         ),
     )
 
@@ -371,8 +377,9 @@ async def _run_bot_impl(transport, max_turns: int = 12):
 
 
 async def bot(runner_args):
-    """Pipecat runner entry point — supports SmallWebRTC (local) + Twilio inbound
-    media (the leg Twilio opens back to /attacker-ws after place_outbound_call).
+    """Pipecat runner entry point — supports SmallWebRTC (local) + Twilio media
+    (the leg Twilio opens back to ``/ws`` after place_outbound_call; the runner
+    serves ``/ws`` and dispatches here with WebSocketRunnerArguments).
 
     Lazy-imports pipecat transports so the module imports without pipecat.
     """

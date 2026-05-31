@@ -43,6 +43,7 @@ omit = [
     "bot-gpt.py",
     "bot-nemotron.py",
     "mock_backend.py",
+    "smoke_voice.py",
     "tests/*",
     "test_nemotron_llm.py",
 ]

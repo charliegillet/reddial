@@ -16,17 +16,32 @@ Run: ``uvicorn api:app``.
 
 from __future__ import annotations
 
+import json
+import logging
+import os
 import threading
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 import attack_library as lib
+import auto_improve
 import campaign_runner
+import loopback
 import scorecard
 
+logger = logging.getLogger("reddial.api")
+
 VERSION = "1.0.0"
+
+# Attack used to capture the representative breaching transcript per scan.
+REPRESENTATIVE_ATTACK_ID = "authority_pretext"
+# Modeled per-turn duration for the representative loopback (matches the campaign).
+REPRESENTATIVE_SECONDS_PER_TURN = 9.0
+# Base dir where run_context persists per-call transcripts.
+TRANSCRIPTS_DIR = "transcripts"
 
 # Hard cap on calls per scan. Loopback is fast/deterministic, but we still bound
 # request work so the synchronous API never runs unbounded. Per API_CONTRACT.md.
@@ -35,6 +50,17 @@ MAX_CONCURRENCY = 16  # cap thread-pool fan-out on the synchronous /scans endpoi
 
 # Where the latest aggregate summary is persisted (scorecard.write_json).
 SCORECARD_PATH = "scorecard.json"
+
+# Auto-improve loop caps (bound the synchronous request) + persistence path.
+MAX_AUTO_ROUNDS = 10
+MAX_PER_ROUND = 100
+AUTO_IMPROVE_PATH = "auto_improve.json"
+
+# Where the latest basic-evalset run result is persisted (restart resilience).
+EVALSET_PATH = "evalset.json"
+
+# How many recent run summaries to keep in the in-process history (Analytics view).
+HISTORY_LIMIT = 50
 
 _DESCRIPTION = (
     "RedDial control-plane API — OFFLINE only. ALL DATA IS FAKE (Stripe test "
@@ -49,13 +75,17 @@ app = FastAPI(
     description=_DESCRIPTION,
 )
 
-# Permissive CORS for the dashboard. Acceptable here because the API is
-# offline-only and serves FAKE data exclusively (no secrets, no live actions).
+# CORS allowlist for the dashboard. Config-driven via REDDIAL_CORS_ORIGINS
+# (comma-separated), defaulting to the local dashboard origin (Vite :5173).
+# Credentials stay off and methods are limited to what the dashboard uses.
+DEFAULT_CORS_ORIGINS = ["http://localhost:5173"]
+_cors_env = os.environ.get("REDDIAL_CORS_ORIGINS", "")
+_cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()] or DEFAULT_CORS_ORIGINS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=False,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -64,11 +94,163 @@ app.add_middleware(
 _LOCK = threading.Lock()
 # In-process registry of run summaries, keyed by run_id, for GET /scans/{run_id}.
 _RUNS: dict[str, dict] = {}
+# In-process registry of one representative breaching transcript per run_id, for
+# GET /scans/{run_id}/transcript. Shape: {run_id: {attack_id, breach, transcript}}.
+# Survives restart only via the on-disk fallback (transcripts/<run_id>/*.json).
+_TRANSCRIPTS: dict[str, dict] = {}
+# Rolling in-process history of run summaries, most-recent-LAST (we reverse on read).
+# Survives restart only for the LATEST entry: full history is in-process, but we
+# seed it from scorecard.json on startup so the Analytics view shows at least the
+# last run after a `uvicorn` restart (see _seed_from_disk).
+_HISTORY: list[dict] = []
 _METRICS = {
     "scans_run": 0,
     "last_breach_rate": 0.0,
     "last_run_id": None,
 }
+# In-process latest auto-improve result dict (the locked run_auto_improve shape),
+# or None until the first POST /auto-improve this process. Disk-backed fallback is
+# AUTO_IMPROVE_PATH so the view survives a `uvicorn` restart.
+_AUTO_IMPROVE_LATEST: dict | None = None
+# In-process latest basic-evalset run result (the run_evalset shape), or None until
+# the first POST /evalset/run this process. Disk-backed fallback is EVALSET_PATH so
+# the view survives a `uvicorn` restart.
+_LAST_EVALSET: dict | None = None
+
+
+def _read_json_disk(path: str) -> dict | None:
+    """Read a persisted JSON object dict from ``path``, or None on any failure.
+
+    Generalized fallback reader used by /scorecard/latest (SCORECARD_PATH) and
+    /auto-improve/latest (AUTO_IMPROVE_PATH) so the dashboard does not load blank
+    after a `uvicorn` restart wipes the in-process registry.
+    """
+    try:
+        raw = Path(path).read_text()
+    except (OSError, ValueError):
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _read_scorecard_disk() -> dict | None:
+    """Read the persisted latest aggregate summary from SCORECARD_PATH, or None."""
+    return _read_json_disk(SCORECARD_PATH)
+
+
+def _transcript_payload(run_id: str | None, result: loopback.CallResult) -> dict:
+    """Project a CallResult down to the transcript-endpoint response shape."""
+    return {
+        "run_id": run_id,
+        "attack_id": result.attack_id,
+        "breach": bool(result.breach),
+        "transcript": list(result.transcript),
+    }
+
+
+def _read_transcript_disk(run_id: str | None = None) -> dict | None:
+    """Fall back to a persisted per-call transcript json on disk, or None.
+
+    If ``run_id`` is given, look under ``transcripts/<run_id>/``; otherwise scan
+    all runs. Picks the newest file (prefer a breaching call so the UI shows a
+    real breach after a restart). Returns the transcript-endpoint payload shape.
+    """
+    def _mtime(p: Path) -> float:
+        # Resilient stat: a file/dir removed concurrently (e.g. a parallel
+        # persist run or external cleanup, racing this read) must not raise out
+        # of the sort key and 500 the endpoint — treat it as oldest.
+        try:
+            return p.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    base = Path(TRANSCRIPTS_DIR)
+    if run_id:
+        dirs = [base / run_id]
+    else:
+        try:
+            dirs = sorted(
+                (p for p in base.iterdir() if p.is_dir()),
+                key=_mtime,
+                reverse=True,
+            )
+        except OSError:
+            return None
+    files: list[Path] = []
+    for d in dirs:
+        try:
+            files.extend(p for p in d.glob("*.json"))
+        except OSError:
+            continue
+    if not files:
+        return None
+    files.sort(key=_mtime, reverse=True)
+
+    def _load(path: Path) -> dict | None:
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(data, dict) or "transcript" not in data:
+            return None
+        return data
+
+    # Prefer a breaching call (newest first); else fall back to the newest call.
+    chosen = None
+    for path in files:
+        data = _load(path)
+        if data is None:
+            continue
+        if chosen is None:
+            chosen = data
+        if data.get("breach"):
+            chosen = data
+            break
+    if chosen is None:
+        return None
+    return {
+        "run_id": chosen.get("run_id", run_id),
+        "attack_id": chosen.get("attack_id", ""),
+        "breach": bool(chosen.get("breach", False)),
+        "transcript": list(chosen.get("transcript", [])),
+    }
+
+
+def _history_summary(summary: dict) -> dict:
+    """Project a full aggregate dict down to the compact run-history row shape."""
+    return {
+        "run_id": summary.get("run_id"),
+        "total_calls": summary.get("total_calls", 0),
+        "leak_rate": summary.get("leak_rate", 0.0),
+        "breach_rate": summary.get("breach_rate", 0.0),
+        "max_grade": summary.get("max_grade", "A"),
+        "max_score": summary.get("max_score", 0),
+        "failed_calls": summary.get("failed_calls", 0),
+    }
+
+
+def _seed_from_disk() -> None:
+    """Seed in-process state from scorecard.json on startup (restart resilience).
+
+    Populates the run registry, metrics, and history with the last persisted
+    summary so /scorecard/latest, /scans and /metrics are non-empty right after a
+    restart, even before any new scan has run this process.
+    """
+    summary = _read_scorecard_disk()
+    if not summary:
+        return
+    run_id = summary.get("run_id")
+    with _LOCK:
+        if _HISTORY:  # already seeded / scans already recorded this process
+            return
+        if run_id:
+            _RUNS[run_id] = summary
+            _METRICS["last_run_id"] = run_id
+        _METRICS["last_breach_rate"] = float(summary.get("breach_rate", 0.0))
+        _HISTORY.append(_history_summary(summary))
 
 
 # --------------------------------------------------------------------------- models
@@ -83,6 +265,26 @@ class ScanRequest(BaseModel):
 class ScanResponse(BaseModel):
     run_id: str
     summary: dict
+
+
+class AutoImproveRequest(BaseModel):
+    rounds: int = Field(default=5, ge=1, le=MAX_AUTO_ROUNDS,
+                        description="Improvement rounds (round 0 = WEAK baseline).")
+    n_per_round: int = Field(default=24, ge=1, le=MAX_PER_ROUND,
+                             description="Loopback calls per attack per round.")
+    seed: int = Field(default=0, ge=0, description="Deterministic seed.")
+
+
+class EvalsetRunRequest(BaseModel):
+    n_per_scenario: int = Field(default=8, ge=1, le=MAX_SCAN_N,
+                                description="Loopback calls per scenario (clamped to MAX_SCAN_N).")
+
+
+class EvalsetImproveRequest(BaseModel):
+    max_rounds: int = Field(default=5, ge=1, le=MAX_AUTO_ROUNDS,
+                            description="Improvement rounds (clamped to MAX_AUTO_ROUNDS).")
+    n_per_scenario: int = Field(default=8, ge=1, le=MAX_SCAN_N,
+                                description="Loopback calls per scenario (clamped to MAX_SCAN_N).")
 
 
 class AttackOut(BaseModel):
@@ -112,6 +314,33 @@ class MetricsResponse(BaseModel):
     last_run_id: str | None
 
 
+class RunSummaryOut(BaseModel):
+    run_id: str | None
+    total_calls: int
+    leak_rate: float
+    breach_rate: float
+    max_grade: str
+    max_score: int
+    failed_calls: int
+
+
+class ScansResponse(BaseModel):
+    runs: list[RunSummaryOut]
+
+
+class TranscriptTurn(BaseModel):
+    role: str
+    text: str
+    state: str | None = None
+
+
+class TranscriptResponse(BaseModel):
+    run_id: str | None
+    attack_id: str
+    breach: bool
+    transcript: list[TranscriptTurn]
+
+
 # --------------------------------------------------------------------------- routes
 
 @app.get("/healthz", response_model=HealthResponse)
@@ -125,12 +354,16 @@ def readyz() -> ReadyResponse:
     """Readiness — confirms the attack library is loaded and runner is importable."""
     attacks_loaded = bool(getattr(lib, "ATTACKS", None))
     runner_ready = hasattr(campaign_runner, "run_campaign")
+    auto_improve_ready = hasattr(auto_improve, "run_auto_improve")
     checks = {
         "attack_library_loaded": attacks_loaded,
         "attack_count": len(lib.ATTACKS),
         "campaign_runner": runner_ready,
+        "auto_improve": auto_improve_ready,
     }
-    return ReadyResponse(ready=attacks_loaded and runner_ready, checks=checks)
+    return ReadyResponse(
+        ready=attacks_loaded and runner_ready and auto_improve_ready, checks=checks
+    )
 
 
 @app.get("/attacks", response_model=AttacksResponse)
@@ -165,16 +398,53 @@ def create_scan(req: ScanRequest) -> ScanResponse:
     )
     run_id = summary.get("run_id")
 
+    # Capture ONE representative breaching transcript for display. The campaign
+    # aggregates many calls but discards transcripts, so we run a single extra
+    # OFFLINE loopback against a known-breaching attack to get full attacker/target
+    # turns. Best-effort: a failure here must not fail the scan.
+    transcript_payload: dict | None = None
+    try:
+        rep = loopback.run_loopback(
+            attack_id=REPRESENTATIVE_ATTACK_ID,
+            seconds_per_turn=REPRESENTATIVE_SECONDS_PER_TURN,
+        )
+        transcript_payload = _transcript_payload(run_id, rep)
+    except Exception:  # noqa: BLE001 — representative capture is best-effort
+        transcript_payload = None
+
     with _LOCK:
         if run_id:
             _RUNS[run_id] = summary
+            if transcript_payload is not None:
+                _TRANSCRIPTS[run_id] = transcript_payload
         _METRICS["scans_run"] += 1
         _METRICS["last_breach_rate"] = float(summary.get("breach_rate", 0.0))
         _METRICS["last_run_id"] = run_id
-    # Persist the latest aggregate so /scorecard/latest survives across calls.
-    scorecard.write_json(summary, SCORECARD_PATH)
+        _HISTORY.append(_history_summary(summary))
+        del _HISTORY[:-HISTORY_LIMIT]  # bound the rolling history
+    # Persist the latest aggregate so /scorecard/latest survives a process restart.
+    # Best-effort: the scan already ran and in-process state is committed, so a
+    # disk error (read-only fs, disk full) must NOT turn a successful scan into a
+    # 500 the client can't interpret. Log and continue.
+    try:
+        scorecard.write_json(summary, SCORECARD_PATH)
+    except OSError as exc:
+        logger.warning("scorecard persist failed for run_id=%s: %s", run_id, exc)
 
     return ScanResponse(run_id=run_id, summary=summary)
+
+
+@app.get("/scans", response_model=ScansResponse)
+def list_scans() -> ScansResponse:
+    """Recent run summaries, most recent first, for the Analytics view.
+
+    History is in-process (bounded to HISTORY_LIMIT) but seeded from
+    ``scorecard.json`` on startup, so at least the latest run survives a restart.
+    OFFLINE-only: this only reads recorded loopback summaries; it dials nothing.
+    """
+    with _LOCK:
+        runs = [RunSummaryOut(**row) for row in reversed(_HISTORY)]
+    return ScansResponse(runs=runs)
 
 
 @app.get("/scans/{run_id}", response_model=ScanResponse)
@@ -187,15 +457,161 @@ def get_scan(run_id: str) -> ScanResponse:
     return ScanResponse(run_id=run_id, summary=summary)
 
 
+@app.get("/transcript/latest", response_model=TranscriptResponse)
+def transcript_latest() -> TranscriptResponse:
+    """Return the latest run's representative breaching transcript.
+
+    Reads the in-process registry first (keyed by the last run_id); if empty
+    (e.g. right after a `uvicorn` restart) FALLS BACK to the newest persisted
+    per-call transcript json under ``transcripts/``. 404 if neither source has one.
+    OFFLINE-only — these are loopback transcripts against the FAKE-PII mock.
+    """
+    with _LOCK:
+        last_run_id = _METRICS["last_run_id"]
+        payload = _TRANSCRIPTS.get(last_run_id) if last_run_id else None
+    if payload is None:
+        payload = _read_transcript_disk()
+    if payload is None:
+        raise HTTPException(status_code=404, detail="no transcript yet — run a scan first")
+    return TranscriptResponse(**payload)
+
+
+@app.get("/scans/{run_id}/transcript", response_model=TranscriptResponse)
+def get_scan_transcript(run_id: str) -> TranscriptResponse:
+    """Return the representative breaching transcript for a run, else 404.
+
+    In-process registry first, then a disk fallback to ``transcripts/<run_id>/``
+    so a known run still resolves after a restart. OFFLINE-only loopback data.
+    """
+    with _LOCK:
+        payload = _TRANSCRIPTS.get(run_id)
+        known = run_id in _RUNS
+    if payload is None:
+        payload = _read_transcript_disk(run_id)
+    if payload is None:
+        if known:
+            raise HTTPException(
+                status_code=404, detail=f"no transcript captured for run_id: {run_id}"
+            )
+        raise HTTPException(status_code=404, detail=f"unknown run_id: {run_id}")
+    return TranscriptResponse(**payload)
+
+
 @app.get("/scorecard/latest")
 def scorecard_latest() -> dict:
-    """Return the most recent aggregate summary, or 404 if no scan has run."""
+    """Return the most recent aggregate summary.
+
+    Reads the in-process registry first; if it is empty (e.g. right after a
+    `uvicorn` restart) it FALLS BACK to the persisted ``scorecard.json`` on disk
+    so the dashboard does not load blank. 404 only if neither source has data.
+    """
     with _LOCK:
         last_run_id = _METRICS["last_run_id"]
         summary = _RUNS.get(last_run_id) if last_run_id else None
     if summary is None:
+        summary = _read_scorecard_disk()
+    if summary is None:
         raise HTTPException(status_code=404, detail="no scorecard yet — run a scan first")
     return summary
+
+
+@app.post("/auto-improve")
+def auto_improve_run(req: AutoImproveRequest) -> dict:
+    """Run the OFFLINE iterative auto-improve loop and return the locked result dict.
+
+    Forces the deterministic mock target + in-process loopback (``target_mode``
+    stays at the engine default 'mock'); there is no way to trigger live/PSTN
+    dialing through this API. ``rounds``/``n_per_round`` are bounded by the pydantic
+    caps. Stores the result in-process as the latest and persists it to
+    AUTO_IMPROVE_PATH so /auto-improve/latest survives a `uvicorn` restart.
+    """
+    global _AUTO_IMPROVE_LATEST
+    result = auto_improve.run_auto_improve(
+        rounds=req.rounds,
+        calls_per_attack=req.n_per_round,
+        seed=req.seed,
+    )
+    with _LOCK:
+        _AUTO_IMPROVE_LATEST = result
+    # Best-effort persistence: a write failure must not fail the request.
+    try:
+        Path(AUTO_IMPROVE_PATH).write_text(json.dumps(result))
+    except OSError:
+        pass
+    return result
+
+
+@app.get("/auto-improve/latest")
+def auto_improve_latest() -> dict:
+    """Return the most recent auto-improve result.
+
+    In-process latest first; if empty (e.g. right after a `uvicorn` restart) FALLS
+    BACK to the persisted AUTO_IMPROVE_PATH on disk. 404 if neither source has data.
+    """
+    with _LOCK:
+        result = _AUTO_IMPROVE_LATEST
+    if result is None:
+        result = _read_json_disk(AUTO_IMPROVE_PATH)
+    if result is None:
+        raise HTTPException(
+            status_code=404, detail="no auto-improve run yet — run one first"
+        )
+    return result
+
+
+@app.get("/evalset")
+def evalset_list() -> dict:
+    """Return the basic evalset definition + the latest run result (or null).
+
+    OFFLINE-only: the evalset runs the in-process loopback against the FAKE-PII
+    mock target; it dials nothing. ``latest`` is the in-process last run, falling
+    back to the persisted EVALSET_PATH after a `uvicorn` restart, else null.
+    """
+    import evalset  # lazy: keep api importable even before evalset.py lands
+    with _LOCK:
+        latest = _LAST_EVALSET
+    if latest is None:
+        latest = _read_json_disk(EVALSET_PATH)
+    return {"evalset": evalset.BASIC_EVALSET, "latest": latest}
+
+
+@app.post("/evalset/run")
+def evalset_run(req: EvalsetRunRequest) -> dict:
+    """Run the OFFLINE basic evalset and return the run result.
+
+    ``n_per_scenario`` is clamped to MAX_SCAN_N (defense-in-depth on top of the
+    pydantic cap). Stores the result in-process as the latest and persists it to
+    EVALSET_PATH so /evalset survives a `uvicorn` restart.
+    """
+    global _LAST_EVALSET
+    import evalset  # lazy: keep api importable even before evalset.py lands
+    n_per_scenario = min(max(1, req.n_per_scenario), MAX_SCAN_N)
+    result = evalset.run_evalset(n_per_scenario=n_per_scenario)
+    with _LOCK:
+        _LAST_EVALSET = result
+    # Best-effort persistence: a write failure must not fail the request.
+    try:
+        Path(EVALSET_PATH).write_text(json.dumps(result))
+    except OSError as exc:
+        logger.warning("evalset persist failed: %s", exc)
+    return result
+
+
+@app.post("/evalset/improve")
+def evalset_improve(req: EvalsetImproveRequest) -> dict:
+    """Run the OFFLINE evalset improvement loop until pass and return the result.
+
+    ``max_rounds``/``n_per_scenario`` are clamped (defense-in-depth on top of the
+    pydantic caps). There is no live/PSTN path — this only drives the in-process
+    loopback against the FAKE-PII mock target.
+    """
+    import evalset  # lazy: keep api importable even before evalset.py lands
+    max_rounds = min(max(1, req.max_rounds), MAX_AUTO_ROUNDS)
+    n_per_scenario = min(max(1, req.n_per_scenario), MAX_SCAN_N)
+    return evalset.improve_until_pass(
+        max_rounds=max_rounds,
+        n_per_scenario=n_per_scenario,
+    )
 
 
 @app.get("/metrics", response_model=MetricsResponse)
@@ -207,3 +623,8 @@ def metrics() -> MetricsResponse:
             last_breach_rate=_METRICS["last_breach_rate"],
             last_run_id=_METRICS["last_run_id"],
         )
+
+
+# Seed history/metrics from the last persisted scorecard so the dashboard's
+# Analytics + scorecard views are non-empty immediately after a restart.
+_seed_from_disk()

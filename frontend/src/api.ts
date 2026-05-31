@@ -40,23 +40,281 @@ export interface Summary {
   time_note?: string;
 }
 
+// Lightweight in-process metrics (Settings/Analytics header).
+export interface Metrics {
+  scans_run: number;
+  last_breach_rate: number;
+  last_run_id: string | null;
+}
+
+// Compact run-history row for the Analytics view (most recent first).
+export interface RunSummary {
+  run_id: string | null;
+  total_calls: number;
+  leak_rate: number;
+  breach_rate: number;
+  max_grade: string;
+  max_score: number;
+  failed_calls: number;
+}
+
+// One conversation turn in a captured loopback transcript.
+export interface TranscriptTurn {
+  role: string;
+  text: string;
+  state?: string;
+}
+
+// Representative breaching transcript for a run (attacker/target turns).
+export interface Transcript {
+  run_id: string | null;
+  attack_id: string;
+  breach: boolean;
+  transcript: TranscriptTurn[];
+}
+
+// ── Auto-improve loop (iterative eval-driven guardrail hardening) ──
+// One round of the loop. `summary` reuses the existing Summary scorecard shape.
+export interface RoundRecord {
+  round: number;
+  clause_added: string | null;   // clause id (e.g. "reject_authority_pretext"); null on baseline
+  guardrail_clauses: string[];
+  summary: Summary;
+  vectors_blocked: string[];
+  vectors_newly_blocked: string[];
+  vectors_still_breaching: string[];
+}
+
+// Per-round metric series for the improvement curve (parallel arrays).
+export interface AutoImproveCurve {
+  rounds: number[];
+  breach_rate: number[];
+  leak_rate: number[];
+  max_score: number[];
+}
+
+interface AutoImproveEndpoint {
+  breach_rate: number;
+  leak_rate: number;
+  max_score: number;
+  max_grade: string;
+}
+
+// The locked result dict returned by POST /auto-improve and GET /auto-improve/latest.
+export interface AutoImproveResult {
+  run_id: string;
+  rounds: number;
+  n_per_round: number;
+  seed: number;
+  trajectory: RoundRecord[];
+  curve: AutoImproveCurve;
+  start: AutoImproveEndpoint;
+  final: AutoImproveEndpoint;
+  improvement: {
+    breach_rate_delta: number;
+    max_score_delta: number;
+    rounds_to_converge: number;
+    converged: boolean;
+  };
+  final_guardrail: string[];
+  held_out: { vector: string; breach_before: boolean; breach_after: boolean };
+  converged_reason: string;
+  honest_note: string;
+  time_note: string;
+}
+
+// ── Basic evalset (the "magic": breach rate dropping to a PASS) ──
+// One scenario in the curated evalset (attack + the bar it must clear).
+export interface EvalsetScenario {
+  id: string;
+  attack_id: string;
+  description: string;
+  pass_criterion: string;
+}
+
+// Per-scenario outcome of one evalset run (green = passed, red = breached).
+export interface EvalsetScenarioResult {
+  id: string;
+  attack_id: string;
+  runs: number;
+  breaches: number;
+  passed: boolean;
+}
+
+// Aggregate result of running the whole evalset once.
+export interface EvalsetResult {
+  scenarios: EvalsetScenarioResult[];
+  passed: boolean;
+  pass_rate: number;
+  total_breaches: number;
+  n_per_scenario: number;
+}
+
+// One round of the auto-improve-until-pass loop.
+export interface EvalsetImproveRound {
+  round: number;
+  guardrail_added: string | null;
+  evalset: EvalsetResult;
+}
+
+// The honest held-out probe: the social_pressure scenario is NEVER trained, so
+// it is EXPECTED to still breach after the TRAIN split passes (red stays red).
+export interface EvalsetHeldOut {
+  scenario_id: string;
+  attack_id: string;
+  breaches_before: number;
+  breaches_after: number;
+  still_breaches: boolean;
+}
+
+// Result of the auto-improve loop: rounds + whether/when the TRAIN split PASSed.
+export interface ImproveResult {
+  rounds: EvalsetImproveRound[];
+  passed: boolean;
+  rounds_to_pass: number | null;
+  final_guardrail: string[];
+  held_out: EvalsetHeldOut | null;
+  honest_note: string;
+}
+
+// Fetch with a hard timeout (AbortController-backed) so a hung/slow control-plane
+// never leaves a request pending forever (which white-screens the dashboard).
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs = 15_000,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Turn raw fetch failures into friendly, actionable messages for the UI.
+function describeFetchError(path: string, err: unknown): Error {
+  if (err instanceof DOMException && err.name === "AbortError") {
+    return new Error(`${path} → request timed out (control-plane slow or unresponsive)`);
+  }
+  if (err instanceof TypeError) {
+    return new Error(`${path} → control-plane unreachable (is the API running on :8080?)`);
+  }
+  return err instanceof Error ? err : new Error(String(err));
+}
+
 async function get<T>(path: string): Promise<T> {
-  const r = await fetch(`${BASE}${path}`);
-  if (!r.ok) throw new Error(`${path} → HTTP ${r.status}`);
-  return r.json() as Promise<T>;
+  // One automatic retry: transient network blips on read-only GETs are safe to
+  // re-attempt and recover the common "server still booting" race on load.
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const r = await fetchWithTimeout(`${BASE}${path}`);
+      if (!r.ok) throw new Error(`${path} → HTTP ${r.status}`);
+      return (await r.json()) as T;
+    } catch (e) {
+      lastErr = e;
+      // Don't retry HTTP errors (4xx/5xx are deterministic); only retry
+      // network/timeout failures, and only once.
+      const isNetwork =
+        e instanceof TypeError || (e instanceof DOMException && e.name === "AbortError");
+      if (!isNetwork || attempt === 1) break;
+    }
+  }
+  throw describeFetchError(path, lastErr);
 }
 
 export const api = {
   health: () => get<{ status: string; version: string }>("/healthz"),
   attacks: () => get<{ attacks: Attack[] }>("/attacks"),
   scorecardLatest: () => get<Summary>("/scorecard/latest"),
+  metrics: () => get<Metrics>("/metrics"),
+  scans: () => get<{ runs: RunSummary[] }>("/scans"),
+  // Representative breaching transcript: a specific run's, or the latest run's.
+  transcript: (runId?: string) =>
+    get<Transcript>(runId ? `/scans/${runId}/transcript` : "/transcript/latest"),
   runScan: async (n: number, concurrency = 1): Promise<{ run_id: string; summary: Summary }> => {
-    const r = await fetch(`${BASE}/scans`, {
+    // A scan runs the attacker FSM N times server-side, so it can take a while;
+    // give it a generous timeout (not retried — POST is not idempotent here).
+    try {
+      const r = await fetchWithTimeout(
+        `${BASE}/scans`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ n, concurrency, persist: false }),
+        },
+        120_000,
+      );
+      if (!r.ok) throw new Error(`/scans → HTTP ${r.status}`);
+      return r.json();
+    } catch (e) {
+      throw describeFetchError("/scans", e);
+    }
+  },
+  // Latest auto-improve result (in-process, disk-fallback). 404 -> throws.
+  autoImproveLatest: () => get<AutoImproveResult>("/auto-improve/latest"),
+  // Run the OFFLINE iterative auto-improve loop (forces mock + loopback).
+  runAutoImprove: async (
+    rounds = 5,
+    nPerRound = 24,
+    seed = 0,
+  ): Promise<AutoImproveResult> => {
+    const r = await fetch(`${BASE}/auto-improve`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ n, concurrency, persist: false }),
+      body: JSON.stringify({ rounds, n_per_round: nPerRound, seed }),
     });
-    if (!r.ok) throw new Error(`/scans → HTTP ${r.status}`);
+    if (!r.ok) throw new Error(`/auto-improve → HTTP ${r.status}`);
     return r.json();
+  },
+  // Curated evalset + the latest run (latest may be null before any run).
+  evalset: () =>
+    get<{ evalset: EvalsetScenario[]; latest: EvalsetResult | null }>("/evalset"),
+  // Run the evalset once (N attempts per scenario). Generous timeout, not retried.
+  runEvalset: async (nPerScenario?: number): Promise<EvalsetResult> => {
+    try {
+      const r = await fetchWithTimeout(
+        `${BASE}/evalset/run`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            nPerScenario != null ? { n_per_scenario: nPerScenario } : {},
+          ),
+        },
+        120_000,
+      );
+      if (!r.ok) throw new Error(`/evalset/run → HTTP ${r.status}`);
+      return r.json();
+    } catch (e) {
+      throw describeFetchError("/evalset/run", e);
+    }
+  },
+  // Auto-improve the guardrail until the evalset PASSes (or max_rounds). The
+  // headline "magic" — can take a long time, so an extra-generous timeout.
+  improveEvalset: async (
+    maxRounds?: number,
+    nPerScenario?: number,
+  ): Promise<ImproveResult> => {
+    try {
+      const body: { max_rounds?: number; n_per_scenario?: number } = {};
+      if (maxRounds != null) body.max_rounds = maxRounds;
+      if (nPerScenario != null) body.n_per_scenario = nPerScenario;
+      const r = await fetchWithTimeout(
+        `${BASE}/evalset/improve`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+        300_000,
+      );
+      if (!r.ok) throw new Error(`/evalset/improve → HTTP ${r.status}`);
+      return r.json();
+    } catch (e) {
+      throw describeFetchError("/evalset/improve", e);
+    }
   },
 };

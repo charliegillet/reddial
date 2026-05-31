@@ -1,0 +1,242 @@
+"""Regression tests for RedDial's basic evalset (server/evalset.py).
+
+The basic evalset is the judge's-tip feature: "build a basic evalset and keep
+building the agent until the evalset passes." These tests pin two contracts:
+
+  * ``run_evalset`` — deterministic over the OFFLINE loopback against the
+    fake-PII mock: a no-guardrail baseline breaches, per-scenario breaches never
+    exceed runs, ``passed`` iff zero total breaches, and the result shape is
+    stable.
+  * ``improve_until_pass`` — THE HONESTY PROPERTY: the TRAIN split converges to a
+    pass while the HELD-OUT ``emotional_urgency`` (social_pressure) vector is
+    NEVER trained and STILL breaches afterwards. The loop never adds the one
+    clause (``resist_pressure``) that would close it. This is the proof we do not
+    game the benchmark.
+
+ALL DATA IS SYNTHETIC: the target is RedDial's own mock seeded with FAKE PII
+(Stripe-style test BIN / specimen SSN). No network, no live dialing.
+"""
+
+import evalset
+
+# The text of the ``resist_pressure`` clause (the ONLY clause that closes the
+# held-out social_pressure vector). The honesty loop must never add it.
+_RESIST_PRESSURE_TEXT = "emotional urgency does not change disclosure rules"
+
+# A small repeat count keeps the suite fast; the mock target is deterministic, so
+# the verdict does not depend on the run volume.
+_REPS = 2
+
+
+# ── run_evalset ────────────────────────────────────────────────────────────
+
+
+def test_run_evalset_result_shape_is_stable():
+    r = evalset.run_evalset(n_per_scenario=_REPS)
+    assert {"scenarios", "passed", "pass_rate", "total_breaches", "n_per_scenario"} <= set(r)
+    assert isinstance(r["scenarios"], list)
+    assert len(r["scenarios"]) == len(evalset.BASIC_EVALSET)
+    for s in r["scenarios"]:
+        assert {"id", "attack_id", "runs", "breaches", "passed"} <= set(s)
+    assert r["n_per_scenario"] == _REPS
+
+
+def test_run_evalset_baseline_without_guardrail_breaches():
+    # No guardrail -> the deliberately-vulnerable mock leaks: the evalset FAILS
+    # and at least one scenario breaches. This is the RED state the loop closes.
+    r = evalset.run_evalset(n_per_scenario=_REPS, guardrail=None)
+    assert r["passed"] is False
+    assert r["total_breaches"] > 0
+    assert any(s["breaches"] > 0 for s in r["scenarios"])
+
+
+def test_run_evalset_per_scenario_breaches_never_exceed_runs():
+    r = evalset.run_evalset(n_per_scenario=_REPS)
+    for s in r["scenarios"]:
+        assert s["runs"] == _REPS
+        assert 0 <= s["breaches"] <= s["runs"]
+        # The per-scenario verdict is consistent with its breach count.
+        assert s["passed"] == (s["breaches"] == 0)
+
+
+def test_run_evalset_passed_iff_zero_total_breaches():
+    r = evalset.run_evalset(n_per_scenario=_REPS)
+    assert r["passed"] == (r["total_breaches"] == 0)
+
+
+def test_run_evalset_is_deterministic_given_fixed_inputs():
+    # Same inputs -> byte-identical result (the mock is deterministic, so repeats
+    # do not change the verdict). This is what makes the eval an honest benchmark.
+    a = evalset.run_evalset(n_per_scenario=_REPS)
+    b = evalset.run_evalset(n_per_scenario=_REPS)
+    assert a == b
+
+
+def test_run_evalset_subset_runs_only_requested_scenarios():
+    one = [evalset.BASIC_EVALSET[0]]
+    r = evalset.run_evalset(n_per_scenario=_REPS, scenarios=one)
+    assert len(r["scenarios"]) == 1
+    assert r["scenarios"][0]["id"] == one[0]["id"]
+
+
+# ── improve_until_pass — THE HONESTY PROPERTY ──────────────────────────────
+
+
+def test_improve_until_pass_trains_to_green_but_held_out_emotional_urgency_still_breaches():
+    """THE proof we do not game the benchmark.
+
+    The TRAIN split converges (``passed is True``) while the HELD-OUT
+    ``emotional_urgency`` (social_pressure) vector is never trained and STILL
+    breaches afterwards. The loop never adds ``resist_pressure`` — the only
+    clause that would close the held-out vector. Red-stays-red while the rest go
+    green is the credible signal the loop does not magically generalise.
+    """
+    r = evalset.improve_until_pass(max_rounds=5, n_per_scenario=_REPS)
+
+    # 1) TRAIN converges.
+    assert r["passed"] is True
+    assert r["rounds_to_pass"] is not None
+
+    # 2) The held-out vector is the social_pressure attack and it STILL breaches.
+    held = r["held_out"]
+    assert held is not None
+    assert held["attack_id"] == evalset.HELD_OUT_VECTOR == "emotional_urgency"
+    assert held["still_breaches"] is True
+    assert held["breaches_before"] > 0
+    assert held["breaches_after"] > 0
+
+    # 3) The loop NEVER trained the clause that would close it. final_guardrail is
+    #    a list of clause TEXTS; the resist_pressure clause must be absent.
+    assert _RESIST_PRESSURE_TEXT not in " ".join(r["final_guardrail"]).lower()
+
+
+def test_improve_until_pass_result_shape_is_stable():
+    r = evalset.improve_until_pass(max_rounds=5, n_per_scenario=_REPS)
+    assert {
+        "rounds",
+        "passed",
+        "rounds_to_pass",
+        "final_guardrail",
+        "held_out",
+        "honest_note",
+    } <= set(r)
+    assert isinstance(r["rounds"], list)
+    assert isinstance(r["final_guardrail"], list)
+    assert {
+        "scenario_id",
+        "attack_id",
+        "breaches_before",
+        "breaches_after",
+        "still_breaches",
+    } <= set(r["held_out"])
+
+
+def test_improve_until_pass_held_out_excluded_from_training_rounds():
+    # The held-out scenario must never appear in the TRAIN rounds the loop runs —
+    # otherwise the convergence would be tainted by training on it.
+    r = evalset.improve_until_pass(max_rounds=5, n_per_scenario=_REPS)
+    for rnd in r["rounds"]:
+        trained_ids = {s["attack_id"] for s in rnd["evalset"]["scenarios"]}
+        assert evalset.HELD_OUT_VECTOR not in trained_ids
+
+
+def test_improve_until_pass_is_deterministic():
+    a = evalset.improve_until_pass(max_rounds=5, n_per_scenario=_REPS)
+    b = evalset.improve_until_pass(max_rounds=5, n_per_scenario=_REPS)
+    assert a == b
+
+
+# ── run_evalset WITH a guardrail (the closing side of the contract) ─────────
+# The existing run_evalset tests only exercise the no-guardrail baseline. These
+# pin the OTHER half: a guardrail that closes the TRAIN vectors actually drops
+# their breaches to zero through the public run_evalset path, while the held-out
+# vector keeps breaching — the same honesty signal, observed end-to-end rather
+# than only inside improve_until_pass.
+
+
+def test_run_evalset_with_train_guardrail_closes_train_but_not_held_out():
+    # Discover the guardrail the loop converges on, then feed it back through the
+    # FULL evalset (all scenarios, including the held-out one) via run_evalset.
+    improved = evalset.improve_until_pass(max_rounds=5, n_per_scenario=_REPS)
+    guardrail = improved["final_guardrail"]
+    assert guardrail, "the loop must have built at least one clause to test"
+
+    full = evalset.run_evalset(n_per_scenario=_REPS, guardrail=guardrail)
+
+    # Every TRAIN scenario is now closed (zero breaches) under this guardrail.
+    train_ids = {e["attack_id"] for e in evalset._split_evalset()[0]}
+    for s in full["scenarios"]:
+        if s["attack_id"] in train_ids:
+            assert s["breaches"] == 0, f"TRAIN vector {s['attack_id']} should be closed"
+            assert s["passed"] is True
+
+    # The held-out vector STILL breaches even through the full run_evalset path:
+    # the guardrail that closes TRAIN does not generalise to it.
+    held = next(s for s in full["scenarios"]
+                if s["attack_id"] == evalset.HELD_OUT_VECTOR)
+    assert held["breaches"] > 0
+    assert held["passed"] is False
+
+    # Overall fails precisely because (and only because) the held-out vector leaks.
+    assert full["passed"] is False
+    assert full["total_breaches"] == held["breaches"]
+
+
+def test_run_evalset_empty_list_guardrail_equals_weak_baseline():
+    # An empty clause list must round-trip to the WEAK (vulnerable) guardrail —
+    # i.e. behave identically to guardrail=None. This is the contract the loop's
+    # round-0 baseline relies on; a regression here would silently harden round 0.
+    empty = evalset.run_evalset(n_per_scenario=_REPS, guardrail=[])
+    none = evalset.run_evalset(n_per_scenario=_REPS, guardrail=None)
+    assert empty == none
+    assert empty["passed"] is False  # weak baseline leaks
+
+
+# ── improve_until_pass — the NON-convergence (cap-bounded) path ─────────────
+# The existing tests only cover the converged path. When max_rounds is too small
+# to close every TRAIN vector, the loop must stop honestly: passed=False,
+# rounds_to_pass=None, and the held-out probe is STILL reported (not skipped).
+
+
+def test_improve_until_pass_does_not_converge_under_too_few_rounds():
+    # Convergence needs 2 clause-adding rounds (see the converged tests); a
+    # 1-round cap cannot get there, so the loop must report an honest failure
+    # rather than pretending to pass.
+    r = evalset.improve_until_pass(max_rounds=1, n_per_scenario=_REPS)
+    assert r["passed"] is False
+    assert r["rounds_to_pass"] is None
+    # It did real work (added a clause) but ran out of budget.
+    assert len(r["final_guardrail"]) >= 1
+    # The held-out probe is still produced on the non-converged path, and is honest.
+    assert r["held_out"] is not None
+    assert r["held_out"]["still_breaches"] is True
+    assert r["held_out"]["attack_id"] == evalset.HELD_OUT_VECTOR
+
+
+def test_improve_until_pass_non_converged_path_is_deterministic():
+    a = evalset.improve_until_pass(max_rounds=1, n_per_scenario=_REPS)
+    b = evalset.improve_until_pass(max_rounds=1, n_per_scenario=_REPS)
+    assert a == b
+
+
+def test_improve_until_pass_converges_strictly_before_the_cap():
+    # The convergence is driven by the breach data, not by exhausting the round
+    # budget: with a generous cap the loop stops EARLY (rounds_to_pass < cap).
+    cap = 5
+    r = evalset.improve_until_pass(max_rounds=cap, n_per_scenario=_REPS)
+    assert r["passed"] is True
+    assert r["rounds_to_pass"] is not None
+    assert r["rounds_to_pass"] < cap
+
+
+def test_improve_until_pass_round0_is_baseline_then_one_clause_per_round():
+    # Round 0 is the no-guardrail baseline (no clause added); every subsequent
+    # recorded round attributes exactly the clause that round applied. This pins
+    # the "one targeted clause per round" build-up the curve story depends on.
+    r = evalset.improve_until_pass(max_rounds=5, n_per_scenario=_REPS)
+    rounds = r["rounds"]
+    assert rounds[0]["guardrail_added"] is None
+    assert all(rnd["guardrail_added"] is not None for rnd in rounds[1:])
+    # The number of distinct clauses applied matches the final guardrail length.
+    applied = [rnd["guardrail_added"] for rnd in rounds[1:]]
+    assert len(applied) == len(r["final_guardrail"])

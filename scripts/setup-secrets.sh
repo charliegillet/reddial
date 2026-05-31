@@ -28,7 +28,7 @@ TARGET="${1:-both}"
 DRY_RUN="${DRY_RUN:-}"
 
 # Pipecat Cloud secret set name — keep in sync with server/pcc-deploy.toml.
-PCC_SECRET_SET="${PCC_SECRET_SET:-flower-bot-secrets}"
+PCC_SECRET_SET="${PCC_SECRET_SET:-reddial-secrets}"
 
 if [[ ! -f "${ENV_FILE}" ]]; then
   echo "ERROR: env file not found: ${ENV_FILE}" >&2
@@ -64,6 +64,19 @@ run() {
   fi
 }
 
+# Like run(), but the secret VALUE must never reach stdout. Pass the redacted
+# command SHAPE as the first arg (for the DRY_RUN preview) and the REAL argv
+# afterward. Dry-run prints only the shape; the live path execs the real argv.
+# Usage: run_secret "<preview shape>" cmd arg1 arg2 ...
+run_secret() {
+  local preview="$1"; shift
+  if [[ -n "${DRY_RUN}" ]]; then
+    echo "DRY_RUN: ${preview}"
+  else
+    "$@"
+  fi
+}
+
 # Read a key's value from .env WITHOUT printing it. Returns non-zero if absent
 # or empty. Handles `KEY=value` lines, ignores comments/blank lines.
 get_env_value() {
@@ -92,7 +105,10 @@ push_pcc() {
   for key in "${PCC_KEYS[@]}"; do
     if val="$(get_env_value "${key}")"; then
       # Value passed via env to avoid it ever appearing in argv/process list.
-      run env "REDDIAL_SECRET_VALUE=${val}" \
+      # The DRY_RUN preview shows the command SHAPE with the value redacted.
+      run_secret \
+        "env REDDIAL_SECRET_VALUE=<redacted> sh -c 'pcc secrets set \"${PCC_SECRET_SET}\" \"${key}=\$REDDIAL_SECRET_VALUE\"'" \
+        env "REDDIAL_SECRET_VALUE=${val}" \
         sh -c "pcc secrets set \"${PCC_SECRET_SET}\" \"${key}=\$REDDIAL_SECRET_VALUE\""
       echo "    set   ${key}"
       set=$((set + 1))
@@ -110,8 +126,11 @@ push_gh() {
   local set=0 skipped=0 val
   for key in "${GH_KEYS[@]}"; do
     if val="$(get_env_value "${key}")"; then
-      # --body reads the value; gh does not echo it back.
-      run gh secret set "${key}" --env production --body "${val}"
+      # --body reads the value; gh does not echo it back. The DRY_RUN preview
+      # shows the command SHAPE with the value redacted.
+      run_secret \
+        "gh secret set ${key} --env production --body <redacted>" \
+        gh secret set "${key}" --env production --body "${val}"
       echo "    set   ${key}"
       set=$((set + 1))
     else

@@ -75,17 +75,20 @@ class RunContext:
         """
         if not self.persist_dir:
             return None
-        if is_dataclass(record) and not isinstance(record, type):
-            payload = asdict(record)
-        elif isinstance(record, dict):
-            payload = record
-        else:
-            payload = {"repr": repr(record)}
-        payload.setdefault("call_id", self.call_id(index, attack_id))
-        payload.setdefault("run_id", self.run_id)
-        path = Path(self.persist_dir) / f"{index:04d}_{attack_id or 'call'}.json"
         try:
+            if is_dataclass(record) and not isinstance(record, type):
+                payload = asdict(record)
+            elif isinstance(record, dict):
+                payload = dict(record)  # copy: never mutate the caller's dict below
+            else:
+                payload = {"repr": repr(record)}
+            payload.setdefault("call_id", self.call_id(index, attack_id))
+            payload.setdefault("run_id", self.run_id)
+            path = Path(self.persist_dir) / f"{index:04d}_{attack_id or 'call'}.json"
             path.write_text(json.dumps(payload, indent=2, default=str))
             return str(path)
-        except OSError:
+        except (OSError, TypeError, ValueError):
+            # Best-effort persistence (per module docstring): a serialization
+            # failure (e.g. a non-serializable / cyclic record) or write error
+            # must never raise into the caller and abort a campaign call.
             return None

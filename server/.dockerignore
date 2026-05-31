@@ -1,0 +1,31 @@
+# Keep the build context lean and prevent secrets/cruft from entering the image.
+# The Dockerfile only needs: pyproject.toml, uv.lock (bind-mounted) and ./*.py.
+
+# Secrets — must NEVER be copied into the image.
+.env
+.env.*
+!.env.example
+
+# Python / uv local state
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Tests are not needed at runtime (curated suite runs in CI, not the image).
+tests/
+
+# Generated artifacts and run output
+results/
+transcripts/
+scorecard.json
+scorecard.html
+
+# Tooling / VCS noise that may sit in the context
+.git/
+.github/
+.omc/
+*.md

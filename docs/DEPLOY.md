@@ -25,10 +25,44 @@ make campaign N=200  # overnight batch -> scorecard.{json,html} (+ transcripts/ 
 
 ## Build & deploy the voice image
 
+The Pipecat base image (`dailyco/pipecat-base`) is published for **linux/arm64
+only** — Pipecat Cloud runs arm64. Build for arm64 with buildx; on an amd64 host
+this uses QEMU emulation (CI does this automatically). Pin a **real** tag — the
+lowest published tag is `0.1.2`; `0.0.8` never existed. Use the digest in prod.
+
 ```bash
-make build TAG=v0.1.0 BASE=dailyco/pipecat-base:0.0.8   # pin the base (never :latest in prod)
+# `make build` now always builds linux/arm64 via buildx (QEMU on amd64, native on
+# Apple Silicon) and defaults BASE to the real, published 0.1.20-py3.12 tag:
+make build TAG=v0.1.0                                   # never :latest in prod
+
+# Equivalent explicit invocation (what `make build` runs under the hood):
+docker buildx build --platform linux/arm64 \
+  --build-arg PIPECAT_BASE=dailyco/pipecat-base:0.1.20-py3.12 \
+  -t reddial:v0.1.0 server
+
 pcc deploy                                              # Pipecat Cloud (pcc-deploy.toml)
 ```
+
+> **Pin the digest in prod.** `0.1.20-py3.12` is a moving tag; for reproducible
+> deploys resolve and pin the immutable digest in `server/Dockerfile`
+> (`dailyco/pipecat-base@sha256:...`). The tag is fine for CI/dev.
+
+### Selecting the bot role at deploy time (audit C3)
+
+Pipecat Cloud injects runtime env **only** from the deploy **secret set**
+(`reddial-secrets`, named in `server/pcc-deploy.toml`) — **not** from the shell
+that runs `pcc deploy`, and `pcc-deploy.toml` accepts no inline `env`/`role` key
+(adding one is rejected as an unexpected key). So `REDDIAL_ROLE` must live in the
+secret set. Set it before deploying:
+
+```bash
+pcc secrets set reddial-secrets REDDIAL_ROLE=attacker --skip   # target | attacker | flower
+pcc deploy
+```
+
+The `Deploy (Pipecat Cloud)` workflow does this automatically: its role dropdown
+upserts `REDDIAL_ROLE` into `reddial-secrets` (an upsert that leaves other
+secrets intact) right before `pcc deploy`, so the dropdown is no longer inert.
 
 Required env (see `.env.example`): `NVIDIA_ASR_URL`, `NEMOTRON_LLM_URL` (no defaults —
 a missing value fails loudly rather than dialing a dead dev IP), `GRADIUM_API_KEY`,
@@ -47,22 +81,28 @@ Dialing is **refused** unless **all** hold (enforced in `safety_controls.py`):
 make cekura-check    # verify Cekura connectivity (explicit status, never a silent no-op)
 ```
 
-## Running a REAL efficacy test (closes BLOCKER 4)
+## Running a REAL efficacy test (closes BLOCKER 4) — click-to-run
 
 The offline scorecard attacks RedDial's **own mock** — it is **not** evidence about a
-real agent. To produce real evidence, an operator with keys + consent runs:
+real agent. To produce real evidence, an operator with keys + consent runs two commands:
 
 ```bash
+# (1) Serve the attacker bot. The Pipecat runner exposes the telephony media socket
+#     at /ws and dispatches it to attacker_bot.bot(); our TwiML streams back to /ws.
+make serve-attacker PUBLIC_HOST=your-app.ngrok.io     # needs NVIDIA + Gradium keys
+
+# (2) In another shell: place ONE gated, consented call (fail-closed safety gate).
 export REDDIAL_DIALING_ENABLED=1
-export REDDIAL_DIAL_ALLOWLIST=+1XXXXXXXXXX        # a number you own / have written consent for
-# NVIDIA + Twilio env set, attacker bot deployed, /attacker-ws reachable
-uv run python efficacy_run.py --mode live --to +1XXXXXXXXXX --consent
+export REDDIAL_DIAL_ALLOWLIST=+1XXXXXXXXXX             # a number you own / have written consent for
+make live-call TO=+1XXXXXXXXXX                         # = efficacy_run.py --mode live --to ... --consent
 ```
 
-This **initiates one gated call**; the breach verdict comes from the attacker
-pipeline's `leak_classifier` on the live transcript. Attach that transcript to the
-artifact in `results/` to claim efficacy. `--mode loopback` always stamps
-`proves_real_world_efficacy = false`.
+Flow: `live-call` → gated `place_outbound_call` → Twilio dials the target → Twilio
+opens the media stream back to `wss://$PUBLIC_HOST/ws` → the runner runs the attacker
+pipeline → on completion it writes `results/efficacy_live_<id>.json` (transcript +
+`leak_classifier` verdict, `target_kind="real-agent"`). `--mode loopback` always
+stamps `proves_real_world_efficacy = false`. The media path is `/ws` (the runner's
+route); override with `REDDIAL_WS_PATH` only if you front the bot with a custom server.
 
 ## Operability
 
@@ -75,5 +115,6 @@ artifact in `results/` to claim efficacy. `--mode loopback` always stamps
 
 ## Known follow-ups (tracked in docs/PRODUCTION_READINESS.md)
 
-- Register the `/attacker-ws` websocket route in the runner before the first live call.
+- ~~Register the `/attacker-ws` websocket route~~ — RESOLVED: the runner serves `/ws` and the
+  outbound TwiML now targets it (`REDDIAL_WS_PATH=/ws`). Verify on the first live call.
 - Real-world efficacy remains **unproven** until a live run against a non-self agent is recorded.

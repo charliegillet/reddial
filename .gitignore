@@ -230,3 +230,19 @@ server/scorecard.html
 server/transcripts/*.json
 server/transcripts/*.wav
 !server/transcripts/.gitkeep
+
+server/transcripts/**/*.json
+server/results/
+frontend/dist/
+
+server/auto_improve.json
+frontend/tsconfig.tsbuildinfo
+
+# generated artifacts (repo-root + any results dir; live transcripts may contain real PII)
+/scorecard.json
+/scorecard.html
+/auto_improve.json
+results/
+efficacy_live_*.json
+server/evalset.json
+.omc/
