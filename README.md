@@ -202,7 +202,7 @@ reachable). Run the **offline harness locally — no keys** — for the full att
 scorecard → improve-until-pass experience:
 
 ```bash
-git clone https://github.com/nihalnihalani/reddial && cd reddial && ./run.sh
+git clone https://github.com/charliegillet/reddial && cd reddial && ./run.sh
 ```
 
 ---

@@ -74,11 +74,11 @@ export function SettingsView({ apiBase, version, health }: SettingsViewProps) {
         <div className="card-body">
           <ul className="doc-links">
             <li>
-              <a href="https://github.com/nihalnihalani/reddial/blob/main/docs/DEPLOY.md"
+              <a href="https://github.com/charliegillet/reddial/blob/main/docs/DEPLOY.md"
                  target="_blank" rel="noopener noreferrer">Deploy & Operate Guide</a>
             </li>
             <li>
-              <a href="https://github.com/nihalnihalani/reddial/blob/main/README.md"
+              <a href="https://github.com/charliegillet/reddial/blob/main/README.md"
                  target="_blank" rel="noopener noreferrer">Project README</a>
             </li>
           </ul>
