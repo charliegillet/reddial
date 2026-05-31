@@ -45,15 +45,11 @@ generalized. It runs two ways:
 
 ## 2. Demo video (< 60 seconds)
 
-> 📹 **[ Add your < 60s demo link here ]**
->
-> Not a feature walk-through. Show the **conversational voice experience** and **what we
-> learned**: let people *hear* the attacker work the agent (pretext → injection →
-> escalation) and the moment it reads the card back — then a few seconds on the build (the
-> Nemotron reasoning-vs-dead-air lesson, why the breach detector is deterministic not
-> model-judged, and the held-out vector that *still* breaks after "improvement"). If the
-> live pipeline isn't up, the **Conversation** view plays a breaching transcript back with
-> browser speech. Reproduces locally in <1 min with no keys ([Quick start](#quick-start)).
+📹 **▶ https://youtu.be/Pg8_IObXY3M**
+
+Hear the attacker work the agent (pretext → injection → escalation) and the moment it reads
+the card back, then the eval-driven improve-until-it-passes loop with the held-out vector
+that *still* breaks. Reproduces locally in <1 min with no keys ([Quick start](#quick-start)).
 
 ---
 
